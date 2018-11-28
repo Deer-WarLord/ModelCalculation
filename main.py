@@ -3,6 +3,7 @@ from sys import maxsize
 import json
 import leather
 from pprint import pprint
+import numpy as np
 
 
 class RearmingSimulation:
@@ -13,28 +14,28 @@ class RearmingSimulation:
             json_initial_data = json.loads(initial_data)
 
         self.C = float(json_initial_data["C"])
-        self.L_old_0 = json_initial_data["L_old_0"]
-        self.K_old_0 = [float(item) for item in json_initial_data["K_old_0"]]
-        self.theta_old = [float(item) for item in json_initial_data["theta_old"]]
-        self.S_phase_2 = [float(item) for item in json_initial_data["S_phase_2"]]
-        self.S_phase_1 = [float(item) for item in json_initial_data["S_phase_1"]]
-        self.S_tilda = [float(item) for item in json_initial_data["S_tilda"]]
+        self.L_old_0 = np.array(json_initial_data["L_old_0"])
+        self.K_old_0 = np.array([float(item) for item in json_initial_data["K_old_0"]])
+        self.theta_old = np.array([float(item) for item in json_initial_data["theta_old"]])
+        self.S_phase_2 = np.array([float(item) for item in json_initial_data["S_phase_2"]])
+        self.S_phase_1 = np.array([float(item) for item in json_initial_data["S_phase_1"]])
+        self.S_tilda = np.array([float(item) for item in json_initial_data["S_tilda"]])
         self.tau = json_initial_data["tau"]
-        self.mu = [float(item) for item in json_initial_data["mu"]]
+        self.mu = np.array([float(item) for item in json_initial_data["mu"]])
         self.nu = float(json_initial_data["nu"])
         self.L0 = json_initial_data["L0"]
 
-        self.betta_old = [float(item) for item in json_initial_data["betta_old"]]
-        self.alpha_old = [float(item) for item in json_initial_data["alpha_old"]]
-        self.A_old = [float(item) for item in json_initial_data["A_old"]]
+        self.betta_old = np.array([float(item) for item in json_initial_data["betta_old"]])
+        self.alpha_old = np.array([float(item) for item in json_initial_data["alpha_old"]])
+        self.A_old = np.array([float(item) for item in json_initial_data["A_old"]])
 
-        self.betta_new = [float(item) for item in json_initial_data["betta_new"]]
-        self.alpha_new = [float(item) for item in json_initial_data["alpha_new"]]
-        self.A_new = [float(item) for item in json_initial_data["A_new"]]
+        self.betta_new = np.array([float(item) for item in json_initial_data["betta_new"]])
+        self.alpha_new = np.array([float(item) for item in json_initial_data["alpha_new"]])
+        self.A_new = np.array([float(item) for item in json_initial_data["A_new"]])
 
-        self.k_new = [float(item) for item in json_initial_data["k_new"]]
+        self.k_new = np.array([float(item) for item in json_initial_data["k_new"]])
 
-        self.a = [float(item) for item in json_initial_data["a"]]
+        self.a = np.array([float(item) for item in json_initial_data["a"]])
 
         self.eps = float(json_initial_data["eps"])
         self.dh = float(json_initial_data["dh"])
@@ -51,9 +52,9 @@ class RearmingSimulation:
                             "total should be less then 1. Now %s" % total)
 
         self.accumulations = {}
-        self.K_new_0 = [0.0, 0.0, 0.0]
-        self.L_new_0 = [0, 0, 0]
-        self.Theta_new_prev = [0.0, 0.0, 0.0]
+        self.K_new_0 = np.array([0.0, 0.0, 0.0])
+        self.L_new_0 = np.array([0, 0, 0])
+        self.Theta_new_prev = np.array([0.0, 0.0, 0.0])
         self.sum_s_underline = 0.8
         self.sum_s_tilda = 0.2
 
@@ -152,91 +153,12 @@ class RearmingSimulation:
         return result
 
     def phase_1(self):
+        s = []
 
-        K_old_prev = self.K_old_0
+        # K_1 = - self.mu * self.K_old_0 + s[0]*
         L_old_prev = self.L_old_0
 
-        result_vectors = {
-            0: (K_old_prev, L_old_prev, 0, self.Xi_old(2, K_old_prev[2],
-                                                       L_old_prev[2]), [0.4, 0.4, 0.0])
-        }
 
-        for t in self.xfrange(1, self.tau + 1, self.dh):
-
-            is_found = False
-            investment = self.Xi_old(1, K_old_prev[1], L_old_prev[1])
-            self.accumulations[t] = investment
-            L_old = [int(self.theta_old[i] * self.L_general(t)) for i in range(0, 3)]
-            sum_L_old = sum(L_old)
-            score_results = {}
-
-            for S_phase_1 in self.generate_s(self.ds, self.sum_s_underline):
-
-                K_old = [self.captial_old(i, K_old_prev[i], t, self.dh,
-                                          K_old_prev[1], L_old_prev[1], S_phase_1[i]) for i in
-                         range(0, 3)]
-
-                X = [self.Xi_old(i, K_old[i], L_old[i]) for i in range(0, 3)]
-
-                if self.matirial_condition(X, sum_L_old):
-                    score_results[S_phase_1] = (self.score_old(X), K_old, X[2])
-                    is_found = True
-
-            if not is_found:
-                raise Exception("The investments vector wasn't found on iteration %d" % t)
-
-            print("Phase 1 iteration %.2f completed " % t)
-
-            max_score = 0
-            for s_vector, (score, K, X2) in score_results.items():
-                if score > max_score:
-                    result_vectors[t] = (K, L_old, investment, X2, s_vector)
-                    max_score = score
-
-            K_old_prev, L_old_prev = result_vectors[t][0], L_old
-
-        grid = leather.Grid()
-
-        chart = leather.Chart('Capital Phase 1')
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][0][0], name="Sector 0")
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][0][1], name="Sector 1")
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][0][2], name="Sector 2")
-        grid.add_one(chart)
-
-        chart = leather.Chart('Employees Phase 1')
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][1][0], name="Sector 0")
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][1][1], name="Sector 1")
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][1][2], name="Sector 2")
-        grid.add_one(chart)
-
-        chart = leather.Chart('X1_X2')
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][2], name="X1")
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][3], name="X2")
-        chart.add_line([(t, self.C) for t in range(0, self.tau + 1)],
-                       x=lambda row, i: row[0], y=lambda row, i: row[1],
-                       name="C")
-        grid.add_one(chart)
-
-        chart = leather.Chart('Share of the investments')
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][4][0], name="Sector 0")
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][4][1], name="Sector 1")
-        chart.add_line(result_vectors.items(), x=lambda row, i: row[0],
-                       y=lambda row, i: row[1][4][2], name="Sector 2")
-        grid.add_one(chart)
-
-        grid.to_svg('results_phase_1.svg')
-
-        return K_old_prev
 
     def phase_2(self, K_old_prev):
         K_new_prev = self.K_new_0
