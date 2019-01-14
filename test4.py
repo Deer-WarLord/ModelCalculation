@@ -1,40 +1,30 @@
 import json
+from itertools import chain
+from time import gmtime, strftime
+
 from sympy import *
-from scipy.optimize import minimize_scalar
-from math import fabs as math_fabs, sqrt as math_sqrt
 
 EPS = 0.001
 
-class RearmingSimulation:
-    # def __init__(self):
-    # 
-    #     self.S_phase_2 = [float(item) for item in json_initial_data["S_phase_2"]]
-    #     self.S_phase_1 = [float(item) for item in json_initial_data["S_phase_1"]]
-    #     self.S_tilda = [float(item) for item in json_initial_data["S_tilda"]]
-    #
-    #     self.eps = float(json_initial_data["eps"])
-    # 
-    #     total = sum(self.S_phase_1) + sum(self.S_tilda)
-    #     if total != 1:
-    #         raise Exception("Share of the new investment in "
-    #                         "total should be less then 1. Now %s" % total)
-    # 
-    #     total = sum(self.S_phase_2)
-    #     if total != 1:
-    #         raise Exception("Share of the old investment in "
-    #                         "total should be less then 1. Now %s" % total)
-    # 
-    # 
-    #     self.Theta_new_prev = [0.0, 0.0, 0.0]
-    #     self.sum_s_underline = 0.8
-    #     self.sum_s_tilda = 0.2
 
-    def generate_s(self, size, share):
+class RearmingSimulation:
+    def __init__(self):
+        self.results = {0: {}}
+        self.res0 = {}
+        self.COND = {}
+        self.EQ = {}
+
+    @staticmethod
+    def generate_s(size, share):
         for i in range(0, size, 1):
             for j in range(0, size, 1):
                 for k in range(0, size, 1):
                     if (i + j + k) == size * share:
                         yield (i * 1.0 / size, j * 1.0 / size, k * 1.0 / size)
+
+    @staticmethod
+    def complex2float(val):
+        return val.real if isinstance(val, complex) else val
 
     def init_equation_system(self):
 
@@ -45,9 +35,6 @@ class RearmingSimulation:
         # TODO make substitution on Lambda
         # TODO find min Lambda
         # TODO make external cycle while difference between F_min >= EPS
-        self.EQ = {}
-        self.COND = {}
-        self.res0 = {}
 
         tau = json_initial_data["tau"]
         self.N = tau * 2
@@ -68,57 +55,52 @@ class RearmingSimulation:
             self.EQ["betta_old_{i}".format(i=i)] = float(json_initial_data["betta_old"][i])
             self.EQ["a_{i}".format(i=i)] = float(json_initial_data["a"][i])
 
-        self.EQ["X_old_1_0"] = self.EQ["A_old_1"] * self.EQ["L_old_1_0"] ** self.EQ["alpha_old_1"] * self.EQ["K_old_1_0"] ** self.EQ["betta_old_1"]
+        self.EQ["X_old_1_0"] = self.EQ["A_old_1"] * self.EQ["L_old_1_0"] ** self.EQ["alpha_old_1"] * \
+                               self.EQ["K_old_1_0"] ** self.EQ["betta_old_1"]
 
         for j in range(1, tau):
             for i in range(0, 3):
                 self.EQ["su_old_{i}_{N}".format(N=j, i=i)] = symbols("su_old_{i}_{N}".format(N=j, i=i), negative=False)
-                self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] * self.EQ[
-                    "K_old_{i}_{pN}".format(pN=j - 1, i=i)] +
-                                                        self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
-                                                        self.EQ["X_old_1_{pN}".format(pN=j - 1, i=i)]) * dt + \
-                                                       self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)]
-
-                # print("K_old_{i}_{N} =".format(N=j, i=i), self.EQ["K_old_{i}_{N}".format(N=j, i=i)])
+                self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
+                                                             self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)] +
+                                                             self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
+                                                             self.EQ["X_old_1_{pN}".format(pN=j - 1, i=i)]) * dt + \
+                                                            self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)]
 
             self.EQ["L_{N}".format(N=j, i=i)] = self.EQ["L_{pN}".format(pN=j - 1, i=i)] * exp(nu * dt)
-            # print("L_{N} =".format(N=j, i=i), self.EQ["L_{N}".format(N=j, i=i)])
 
             for i in range(0, 3):
-                self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = self.EQ["L_{N}".format(N=j, i=i)] * self.EQ["theta_old_{i}".format(i=i)]
-                # print("L_old_{i}_{N} =".format(N=j, i=i), self.EQ["L_old_{i}_{N}".format(N=j, i=i)])
+                self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = self.EQ["L_{N}".format(N=j, i=i)] * \
+                                                            self.EQ["theta_old_{i}".format(i=i)]
 
             for i in range(0, 3):
-                self.EQ["X_old_{i}_{N}".format(N=j, i=i)] = self.EQ["A_old_{i}".format(i=i)] * self.EQ["L_old_{i}_{N}".format(
-                    N=j, i=i)] ** self.EQ["alpha_old_{i}".format(i=i)] * self.EQ["K_old_{i}_{N}".format(N=j, i=i)] ** self.EQ[
-                    "betta_old_{i}".format(i=i)]
+                self.EQ["X_old_{i}_{N}".format(N=j, i=i)] = self.EQ["A_old_{i}".format(i=i)] * \
+                                                            self.EQ["L_old_{i}_{N}".format(N=j, i=i)] ** \
+                                                            self.EQ["alpha_old_{i}".format(i=i)] * \
+                                                            self.EQ["K_old_{i}_{N}".format(N=j, i=i)] ** \
+                                                            self.EQ["betta_old_{i}".format(i=i)]
 
-                # print("X_old_{i}_{N} =".format(N=j, i=i), self.EQ["X_old_{i}_{N}".format(N=j, i=i)])
                 self.EQ["st_old_{i}_{N}".format(N=j, i=i)] = symbols("st_old_{i}_{N}".format(N=j, i=i), negative=False)
 
             for i in range(0, 3):
-                self.EQ["I_{i}_{N}".format(N=j, i=i)] = self.EQ["st_old_{i}_{N}".format(N=j, i=i)] * self.EQ[
-                    "X_old_1_{N}".format(N=j, i=i)]
-                # print("I_{i}_{N} =".format(N=j, i=i), self.EQ["I_{i}_{N}".format(N=j, i=i)])
+                self.EQ["I_{i}_{N}".format(N=j, i=i)] = self.EQ["st_old_{i}_{N}".format(N=j, i=i)] * \
+                                                        self.EQ["X_old_1_{N}".format(N=j, i=i)]
 
             self.COND["invest_{N}".format(N=j)] = sum([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] +
-                                                   self.EQ["st_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)]) - 1
-
-            # print("invest_{N} =".format(N=j), self.COND["invest_{N}".format(N=j)])
+                                                       self.EQ["st_old_{i}_{N}".format(N=j, i=i)] for i in
+                                                       range(0, 3)]) - 1
 
             self.COND["balance_{N}".format(N=j)] = Abs(self.EQ["X_old_0_{N}".format(N=j)] -
-                sum([self.EQ["X_old_{i}_{N}".format(N=j, i=i)] * self.EQ["a_{i}".format(i=i)] for i in range(0, 3)])) / self.EQ["L_{N}".format(N=j, i=i)]
-
-            # print("balance_{N} =".format(N=j), self.COND["balance_{N}".format(N=j)])
-
-            # print("-"*200+"\n")
-        # ConditionSet()
+                                                       sum([self.EQ["X_old_{i}_{N}".format(N=j, i=i)] *
+                                                            self.EQ["a_{i}".format(i=i)] for i in range(0, 3)])) / \
+                                                   self.EQ["L_{N}".format(N=j, i=i)]
 
         for j in range(1, tau):
             s = None
             consumption = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["X_old_2_{N}".format(N=j)])
-            balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)], self.COND["balance_{N}".format(N=j)])
-            for S_phase_1 in self.generate_s(self.ds, 0.8):
+            balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
+                               self.COND["balance_{N}".format(N=j)])
+            for S_phase_1 in self.generate_s(self.ds, 0.97):
                 if consumption(S_phase_1[2]) >= self.C and balance(*S_phase_1) <= 1:
                     s = S_phase_1
                     break
@@ -126,17 +108,15 @@ class RearmingSimulation:
                 print("nothing was found")
                 break
             values = [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)]
-            for k in range(j+1, tau):
-                self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].subs([(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
+            for k in range(j + 1, tau):
+                self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].subs(
+                    [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
                 self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].subs(values)
             print("step {j} s: {s}".format(j=j, s=s))
-
-        return
-
-
-        # --------------------------------------------------------------
+            self.results[0].update({self.EQ["su_old_{i}_{N}".format(N=j, i=i)]: s[i] for i in range(0, 3)})
 
         for i in range(0, 3):
+            self.EQ["theta_old_{i}_{pN}".format(i=i, pN=tau - 1)] = self.EQ["theta_old_{i}".format(i=i)]
             self.EQ["K_new_{i}_{pN}".format(pN=tau - 1, i=i)] = 0.0
             self.EQ["I_{i}_{tau}".format(tau=tau, i=i)] = 0.0
             self.EQ["A_new_{i}".format(i=i)] = float(json_initial_data["A_new"][i])
@@ -148,68 +128,129 @@ class RearmingSimulation:
 
         for j in range(tau, self.N):
             for i in range(0, 3):
-                self.EQ["st_new_{i}_{N}".format(N=j, i=i)] = symbols("st_new_{i}_{N}".format(N=j, i=i))
+                self.EQ["st_new_{i}_{N}".format(N=j, i=i)] = symbols("st_new_{i}_{N}".format(N=j, i=i), negative=False)
 
-                self.EQ["K_new_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] * self.EQ[
-                    "K_new_{i}_{pN}".format(pN=j - 1, i=i)] + self.EQ["I_{i}_{pN}".format(pN=j + 1 - tau, i=i)] +
-                                                        self.EQ["st_new_{i}_{N}".format(N=j, i=i)] * self.EQ[
-                                                            "X_new_1_{pN}".format(pN=j - 1, i=i)]) * dt + self.EQ[
-                                                           "K_new_{i}_{pN}".format(pN=j - 1, i=i)]
+                self.EQ["K_new_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
+                                                             self.EQ["K_new_{i}_{pN}".format(pN=j - 1, i=i)] +
+                                                             self.EQ["I_{i}_{pN}".format(pN=j + 1 - tau, i=i)] +
+                                                             self.EQ["st_new_{i}_{N}".format(N=j, i=i)] *
+                                                             self.EQ["X_new_1_{pN}".format(pN=j - 1, i=i)]) * dt + \
+                                                            self.EQ["K_new_{i}_{pN}".format(pN=j - 1, i=i)]
 
-                # print("K_new_{i}_{N} =".format(N=j, i=i), self.EQ["K_new_{i}_{N}".format(N=j, i=i)])
-
-            for i in range(0, 3):
-                self.EQ["L_new_{i}_{N}".format(N=j, i=i)] = self.EQ["K_new_{i}_{N}".format(N=j, i=i)] / self.EQ["k_{i}".format(i=i)]
-                # print("L_new_{i}_{N} =".format(N=j, i=i), self.EQ["L_new_{i}_{N}".format(N=j, i=i)])
-
-            self.EQ["L_{N}".format(N=j, i=i)] = self.EQ["L_{pN}".format(pN=j - 1, i=i)] * exp(nu * dt)
-            # print("L_{N} =".format(N=j, i=i), self.EQ["L_{N}".format(N=j, i=i)])
+            self.EQ["L_{N}".format(N=j)] = self.EQ["L_{pN}".format(pN=j - 1)] * exp(nu * dt)
 
             for i in range(0, 3):
-                self.EQ["theta_new_{i}_{N}".format(N=j, i=i)] = self.EQ["L_new_{i}_{N}".format(N=j, i=i)] / self.EQ[
-                    "L_{N}".format(N=j, i=i)]
+                self.EQ["L_new_v1_{i}_{N}".format(N=j, i=i)] = self.EQ["K_new_{i}_{N}".format(N=j, i=i)] / \
+                                                               self.EQ["k_{i}".format(i=i)]
 
-                self.EQ["X_new_{i}_{N}".format(N=j, i=i)] = self.EQ["A_new_{i}".format(i=i)] * self.EQ["L_new_{i}_{N}".format(
-                    N=j, i=i)] ** self.EQ["alpha_new_{i}".format(i=i)] * self.EQ["K_new_{i}_{N}".format(N=j, i=i)] ** self.EQ[
-                    "betta_new_{i}".format(i=i)]
+                self.EQ["L_new_v2_{i}_{N}".format(N=j, i=i)] = self.EQ["theta_old_{i}_{pN}".format(i=i, pN=j - 1)] * \
+                                                               self.EQ["L_{N}".format(N=j)]
 
-                # print("X_new_{i}_{N} =".format(N=j, i=i), self.EQ["X_new_{i}_{N}".format(N=j, i=i)])
+                self.EQ["L_new_{i}_{N}".format(N=j, i=i)] = Min(self.EQ["L_new_v1_{i}_{N}".format(N=j, i=i)],
+                                                                self.EQ["L_new_v2_{i}_{N}".format(N=j, i=i)])
 
             for i in range(0, 3):
-                self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = (self.EQ["theta_old_{i}".format(i=i)] - self.EQ[
-                    "theta_new_{i}_{N}".format(N=j, i=i)]) * \
-                                                       self.EQ["L_{N}".format(N=j, i=i)]
-                # print("L_old_{i}_{N} =".format(N=j, i=i), self.EQ["L_old_{i}_{N}".format(N=j, i=i)])
+                self.EQ["theta_new_{i}_{N}".format(N=j, i=i)] = self.EQ["L_new_{i}_{N}".format(N=j, i=i)] / \
+                                                                self.EQ["L_{N}".format(N=j, i=i)]
+
+                self.EQ["X_new_{i}_{N}".format(N=j, i=i)] = self.EQ["A_new_{i}".format(i=i)] * \
+                                                            self.EQ["L_new_{i}_{N}".format(N=j, i=i)] ** \
+                                                            self.EQ["alpha_new_{i}".format(i=i)] * \
+                                                            self.EQ["K_new_{i}_{N}".format(N=j, i=i)] ** \
+                                                            self.EQ["betta_new_{i}".format(i=i)]
+
+            for i in range(0, 3):
+                self.EQ["theta_old_{i}_{N}".format(i=i, N=j)] = self.EQ["theta_old_{i}_{pN}".format(i=i, pN=j - 1)] - \
+                                                                self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]
+
+                self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = self.EQ["theta_old_{i}_{N}".format(i=i, N=j)] * \
+                                                            self.EQ["L_{N}".format(N=j, i=i)]
 
             for i in range(0, 3):
                 self.EQ["su_old_{i}_{N}".format(N=j, i=i)] = symbols("su_old_{i}_{N}".format(N=j, i=i))
-                self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] * self.EQ[
-                    "K_old_{i}_{pN}".format(pN=j - 1, i=i)] +
-                                                        self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
-                                                        self.EQ["X_old_1_{pN}".format(pN=j - 1, i=i)]) * dt + \
-                                                       self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)]
-                # print("K_old_{i}_{N} =".format(N=j, i=i), self.EQ["K_old_{i}_{N}".format(N=j, i=i)])
+                self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
+                                                             self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)] +
+                                                             self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
+                                                             self.EQ["X_old_1_{pN}".format(pN=j - 1, i=i)]) * dt + \
+                                                            self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)]
 
             for i in range(0, 3):
-                self.EQ["X_old_{i}_{N}".format(N=j, i=i)] = self.EQ["A_old_{i}".format(i=i)] * self.EQ["L_old_{i}_{N}".format(
-                    N=j, i=i)] ** self.EQ["alpha_old_{i}".format(i=i)] * self.EQ["K_old_{i}_{N}".format(N=j, i=i)] ** self.EQ[
-                    "betta_old_{i}".format(i=i)]
-                # print("X_old_{i}_{N} =".format(N=j, i=i), self.EQ["X_old_{i}_{N}".format(N=j, i=i)])
+                self.EQ["X_old_{i}_{N}".format(N=j, i=i)] = self.EQ["A_old_{i}".format(i=i)] * \
+                                                            self.EQ["L_old_{i}_{N}".format(N=j, i=i)] ** \
+                                                            self.EQ["alpha_old_{i}".format(i=i)] * \
+                                                            self.EQ["K_old_{i}_{N}".format(N=j, i=i)] ** \
+                                                            self.EQ["betta_old_{i}".format(i=i)]
 
-                # print("-"*200+"\n")
+            self.COND["balance_new_{N}".format(N=j)] = Abs(self.EQ["X_new_0_{N}".format(N=j)] -
+                                                           sum([self.EQ["X_new_{i}_{N}".format(N=j, i=i)] *
+                                                                self.EQ["a_{i}".format(i=i)] for i in range(0, 3)])) / \
+                                                       self.EQ["L_{N}".format(N=j, i=i)]
 
-        self.target_func = sum([EPS * (self.EQ["theta_old_{i}".format(i=i)] - self.EQ["theta_new_{i}_{N}".format(N=self.N-1, i=i)]) ** 2 for i in range(0,3)])
+            self.COND["consuming_bound_{N}".format(N=j)] = self.EQ["X_new_2_{N}".format(N=j)] + \
+                                                           self.EQ["X_old_2_{N}".format(N=j)]
+            print(strftime("%H:%M:%S", gmtime()), j)
 
-        print("F = ", self.target_func)
+        for j in range(tau, self.N):
+            _st_new, _st_old, _su_old = None, None, None
+            consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].subs(self.results[0])
+            consumption = lambdify((self.EQ["st_new_2_{N}".format(N=j)],
+                                    self.EQ["su_old_2_{N}".format(N=j)],
+                                    self.EQ["st_old_2_{tau}".format(tau=j + 1 - tau)]), consumption_subs)
 
-        for s in sorted(self.target_func.free_symbols, key=lambda x: str(x)[::-1]):
-            print(s)
+            balance_subs = self.COND["balance_new_{N}".format(N=j)].subs(self.results[0])
+            balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
+                                self.EQ["st_new_1_{N}".format(N=j)],
+                                self.EQ["st_new_2_{N}".format(N=j)],
+                                self.EQ["st_old_0_{N}".format(N=j + 1 - tau)],
+                                self.EQ["st_old_1_{N}".format(N=j + 1 - tau)],
+                                self.EQ["st_old_2_{N}".format(N=j + 1 - tau)]], balance_subs)
 
-        consuming_bound_new = lambda X2_new, X2_old, C: X2_new + X2_old >= C
+            for st_new in self.generate_s(self.ds, 1.0):
+                for st_old in self.generate_s(int(1.0 / 0.001), 0.03):
+                    b_prev = 0
+                    for su_old in self.generate_s(self.ds, 1.0):
+                        b = balance(*chain(st_new, st_old))
+                        if int(b_prev) != int(b) and b < 10:
+                            print("step", j, st_old, b)
+                        if self.complex2float(consumption(st_new[2], su_old[2], st_old[2])) >= self.C and b <= 1:
+                            _st_new, _st_old, _su_old = st_new, st_old, su_old
+                            break
+                        b_prev = b
+                    if _st_old:
+                        break
+                if _st_old:
+                    break
 
-        investments_balance_old = lambda su: math_fabs(sum(su) - 1) <= EPS
+            if not _st_old:
+                print("nothing was found")
+                break
 
-        investments_balance_new = lambda st: math_fabs(sum(st) - 1) <= EPS
+            print(strftime("%H:%M:%S", gmtime()),
+                  "step {j} st_new: {st_new} su_old: {su_old} st_old: {st_old}".format(j=j,
+                                                                                       st_new=_st_new,
+                                                                                       su_old=_su_old,
+                                                                                       st_old=_st_old))
+
+            for i in range(0, 3):
+                self.results[0].update({self.EQ["st_old_{i}_{N}".format(i=i, N=j + 1 - tau)]: _st_old[i]})
+                self.results[0].update({self.EQ["su_old_{i}_{N}".format(i=i, N=j)]: _su_old[i]})
+                self.results[0].update({self.EQ["st_new_{i}_{N}".format(i=i, N=j)]: _st_new[i]})
+
+            l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].subs(self.results[0]) for i in range(0, 3)]
+            l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].subs(self.results[0]) for i in range(0, 3)]
+
+            print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
+
+            for k in range(j + 1, tau):
+                self.COND["consuming_bound_{N}".format(N=k)] = \
+                    self.COND["consuming_bound_{N}".format(N=k)].subs(self.results[0])
+                self.COND["balance_new_{N}".format(N=k)] = \
+                    self.COND["balance_new_{N}".format(N=k)].subs(self.results[0])
+
+            target_func = sum([EPS * (self.EQ["theta_old_{i}".format(i=i)] -
+                                      self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]) ** 2 for i in range(0, 3)])
+
+            print(strftime("%H:%M:%S", gmtime()), "F =", target_func.subs(self.results[0]))
 
 
 if __name__ == "__main__":
