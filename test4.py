@@ -100,7 +100,7 @@ class RearmingSimulation:
             consumption = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["X_old_2_{N}".format(N=j)])
             balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
                                self.COND["balance_{N}".format(N=j)])
-            for S_phase_1 in self.generate_s(self.ds, 0.97):
+            for S_phase_1 in self.generate_s(self.ds, 0.8):
                 if consumption(S_phase_1[2]) >= self.C and balance(*S_phase_1) <= 1:
                     s = S_phase_1
                     break
@@ -205,23 +205,33 @@ class RearmingSimulation:
                                 self.EQ["st_old_1_{N}".format(N=j + 1 - tau)],
                                 self.EQ["st_old_2_{N}".format(N=j + 1 - tau)]], balance_subs)
 
+            b_prev = 0
+
             for st_new in self.generate_s(self.ds, 1.0):
-                for st_old in self.generate_s(int(1.0 / 0.001), 0.03):
-                    b_prev = 0
-                    for su_old in self.generate_s(self.ds, 1.0):
-                        b = balance(*chain(st_new, st_old))
-                        if int(b_prev) != int(b) and b < 10:
-                            print("step", j, st_old, b)
-                        if self.complex2float(consumption(st_new[2], su_old[2], st_old[2])) >= self.C and b <= 1:
-                            _st_new, _st_old, _su_old = st_new, st_old, su_old
-                            break
+
+                for st_old in self.generate_s(self.ds, 0.2):
+
+                    b = balance(*chain(st_new, st_old))
+
+                    if int(b_prev) != int(b) and b < 10:
+                        print("step", j, st_old, b)
+
+                    if b <= 1:
+                        _st_new, _st_old = st_new, st_old
                         b_prev = b
-                    if _st_old:
+
+                        for su_old in self.generate_s(self.ds, 1.0):
+                            if self.complex2float(consumption(st_new[2], su_old[2], st_old[2])) >= self.C:
+                                _su_old = su_old
+                                break
+
+                    if _su_old:
                         break
-                if _st_old:
+
+                if _su_old:
                     break
 
-            if not _st_old:
+            if not _su_old:
                 print("nothing was found")
                 break
 
