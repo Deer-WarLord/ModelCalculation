@@ -90,24 +90,11 @@ class RearmingSimulation:
                                                        self.EQ["st_old_{i}_{N}".format(N=j, i=i)] for i in
                                                        range(0, 3)]) - 1
 
-            self.COND["balance_{N}".format(N=j)] = Abs(self.EQ["X_old_0_{N}".format(N=j)] -
-                                                       sum([self.EQ["X_old_{i}_{N}".format(N=j, i=i)] *
-                                                            self.EQ["a_{i}".format(i=i)] for i in range(0, 3)])) / \
-                                                   self.EQ["L_{N}".format(N=j, i=i)]
-        # self.results[0] = {
-        #     self.EQ["su_old_0_1"]: 0.45,
-        #     self.EQ["su_old_1_1"]: 0.23,
-        #     self.EQ["su_old_2_1"]: 0.11,
-        #     self.EQ["su_old_0_2"]: 0.47,
-        #     self.EQ["su_old_1_2"]: 0.27,
-        #     self.EQ["su_old_2_2"]: 0.06,
-        #     self.EQ["su_old_0_3"]: 0.53,
-        #     self.EQ["su_old_1_3"]: 0.15,
-        #     self.EQ["su_old_2_3"]: 0.12,
-        #     self.EQ["su_old_0_4"]: 0.52,
-        #     self.EQ["su_old_1_4"]: 0.28,
-        #     self.EQ["su_old_2_4"]: 0.0,
-        # }
+            self.COND["balance_{N}".format(N=j)] = (self.EQ["X_old_0_{N}".format(N=j)] -
+                                                   (self.EQ["X_old_0_{N}".format(N=j)] * self.EQ["a_0"] +
+                                                    self.EQ["X_old_1_{N}".format(N=j)] * self.EQ["a_1"] +
+                                                    self.EQ["X_old_2_{N}".format(N=j)] * self.EQ["a_2"])) / \
+                                                   self.EQ["L_{N}".format(N=j)]
 
         for j in range(1, tau):
             s = None
@@ -115,7 +102,7 @@ class RearmingSimulation:
             balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
                                self.COND["balance_{N}".format(N=j)])
             for S_phase_1 in self.generate_s(self.ds, 0.9):
-                if consumption(S_phase_1[2]) >= self.C and balance(*S_phase_1) <= 1:
+                if consumption(S_phase_1[2]) >= self.C and -1.0 <= balance(*S_phase_1) <= 1.0:
                     s = S_phase_1
                     break
             if not s:
@@ -206,10 +193,11 @@ class RearmingSimulation:
 
             print(strftime("%H:%M:%S", gmtime()), "X_old", j)
 
-            self.COND["balance_new_{N}".format(N=j)] = Abs(self.EQ["X_new_0_{N}".format(N=j)] -
-                                                           sum([self.EQ["X_new_{i}_{N}".format(N=j, i=i)] *
-                                                                self.EQ["a_{i}".format(i=i)] for i in range(0, 3)])) / \
-                                                       self.EQ["L_{N}".format(N=j, i=i)]
+            self.COND["balance_new_{N}".format(N=j)] = (self.EQ["X_new_0_{N}".format(N=j)] -
+                                                       (self.EQ["X_new_0_{N}".format(N=j)] * self.EQ["a_0"] +
+                                                        self.EQ["X_new_1_{N}".format(N=j)] * self.EQ["a_1"] +
+                                                        self.EQ["X_new_2_{N}".format(N=j)] * self.EQ["a_2"])) / \
+                                                       self.EQ["L_{N}".format(N=j)]
 
             print(strftime("%H:%M:%S", gmtime()), "balance_new", j)
 
@@ -217,8 +205,6 @@ class RearmingSimulation:
                                                            self.EQ["X_old_2_{N}".format(N=j)]
 
             print(strftime("%H:%M:%S", gmtime()), "consuming_bound", j)
-
-            # print(strftime("%H:%M:%S", gmtime()), j)
 
         for j in range(tau, self.N):
             _st_new, _st_old, _su_old = None, None, None
@@ -243,10 +229,10 @@ class RearmingSimulation:
 
                     b = balance(*chain(st_new, st_old))
 
-                    if int(b_prev) != int(b) and b < 10:
+                    if int(b_prev) != int(b) and -5.0 < b < 5.0:
                         print("step", j, st_old, b)
 
-                    if b <= 1:
+                    if -1.0 <= b <= 1.0:
                         _st_new, _st_old = st_new, st_old
                         b_prev = b
 
