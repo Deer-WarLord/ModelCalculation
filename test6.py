@@ -2,7 +2,7 @@ import json
 from itertools import chain
 from time import gmtime, strftime
 import numpy as np
-from scipy.optimize import fmin_cobyla
+from scipy.optimize import fmin_slsqp
 
 from sympy import *
 
@@ -13,7 +13,7 @@ def scipy_f_wrap(f):
     """
         Wrapper for f(X) -> f(X[0], X[1])
     """
-    return lambda x: f(*x)
+    return lambda x: np.array(f(*x))
 
 
 class RearmingSimulation:
@@ -96,19 +96,13 @@ class RearmingSimulation:
                                                        self.EQ["st_old_{i}_{N}".format(N=j, i=i)] for i in
                                                        range(0, 3)])
 
-            self.COND["invest_L_{N}".format(N=j)] = self.COND["invest_{N}".format(N=j)] - 0.99  # >0
-
-            self.COND["invest_R_{N}".format(N=j)] = 1 - self.COND["invest_{N}".format(N=j)]  # >0
+            self.COND["invest_M_{N}".format(N=j)] = 1 - self.COND["invest_{N}".format(N=j)]  # >0
 
             self.COND["balance_{N}".format(N=j)] = (self.EQ["X_old_0_{N}".format(N=j)] -
                                                     (self.EQ["X_old_0_{N}".format(N=j)] * self.EQ["a_0"] +
                                                      self.EQ["X_old_1_{N}".format(N=j)] * self.EQ["a_1"] +
                                                      self.EQ["X_old_2_{N}".format(N=j)] * self.EQ["a_2"])) / \
                                                    self.EQ["L_{N}".format(N=j)]
-
-            self.COND["balance_L_{N}".format(N=j)] = self.COND["balance_{N}".format(N=j)]  # >0
-
-            self.COND["balance_R_{N}".format(N=j)] = 1 - self.COND["balance_{N}".format(N=j)]  # >0
 
             self.COND["consuming_bound_{N}".format(N=j)] = self.EQ["X_old_2_{N}".format(N=j)]
 
@@ -188,26 +182,18 @@ class RearmingSimulation:
             self.COND["invest_new_{N}".format(N=j)] = sum([self.EQ["st_new_{i}_{N}".format(N=j, i=i)] for i in
                                                            range(0, 3)])
 
-            self.COND["invest_new_L_{N}".format(N=j)] = self.COND["invest_new_{N}".format(N=j)] - 0.99  # >0
-
-            self.COND["invest_new_R_{N}".format(N=j)] = 1 - self.COND["invest_new_{N}".format(N=j)]  # >0
+            self.COND["invest_new_M_{N}".format(N=j)] = 1 - self.COND["invest_new_{N}".format(N=j)]  # >0
 
             self.COND["invest_old_{N}".format(N=j)] = sum([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in
                                                            range(0, 3)])
 
-            self.COND["invest_old_L_{N}".format(N=j)] = self.COND["invest_old_{N}".format(N=j)] - 0.99  # >0
-
-            self.COND["invest_old_R_{N}".format(N=j)] = 1 - self.COND["invest_old_{N}".format(N=j)]  # >0
+            self.COND["invest_old_M_{N}".format(N=j)] = 1 - self.COND["invest_old_{N}".format(N=j)]  # >0
 
             self.COND["balance_new_{N}".format(N=j)] = (self.EQ["X_new_0_{N}".format(N=j)] -
                                                         (self.EQ["X_new_0_{N}".format(N=j)] * self.EQ["a_0"] +
                                                          self.EQ["X_new_1_{N}".format(N=j)] * self.EQ["a_1"] +
                                                          self.EQ["X_new_2_{N}".format(N=j)] * self.EQ["a_2"])) / \
                                                        self.EQ["L_{N}".format(N=j)]
-
-            self.COND["balance_new_L_{N}".format(N=j)] = self.COND["balance_new_{N}".format(N=j)]  # >0
-
-            self.COND["balance_new_R_{N}".format(N=j)] = 1 - self.COND["balance_new_{N}".format(N=j)]  # >0
 
             self.COND["consuming_bound_{N}".format(N=j)] = self.EQ["X_new_2_{N}".format(N=j)] + \
                                                            self.EQ["X_old_2_{N}".format(N=j)]
@@ -313,59 +299,132 @@ class RearmingSimulation:
         print(strftime("%H:%M:%S", gmtime()), "Phase 2 is completed")
 
     def find_min_vector(self):
+
         target_func = sum([(self.EQ["theta_old_{i}".format(i=i)] -
                             self.EQ["theta_new_{i}_{N}".format(N=self.N, i=i)]) for i in range(0, 3)])
 
-        search_vector = sorted(self.results[0].keys(), key=str)
+        step = 0
+        f_prev = target_func.subs(self.results[0])
+        f_current = 0
 
-        objective = scipy_f_wrap(lambdify(search_vector, target_func))
+        while True:
 
-        init_vector = [self.results[0][s] for s in search_vector]
+            for j in reversed(range(self.tau + 1, self.N + 1)):
 
-        constr = []
+                search_vector = [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
+                if not self._part_vector(target_func, search_vector, step):
+                    break
+                step += 1
+
+                search_vector = [self.EQ["su_old_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
+                if not self._part_vector(target_func, search_vector, step):
+                    break
+                step += 1
+
+                search_vector = [self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
+                                [self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)]
+                if not self._part_vector(target_func, search_vector, step):
+                    break
+                step += 1
+            else:
+
+                f_current = target_func.subs(self.results[step])
+
+                if abs(f_prev - f_current) > 0.000001:
+                    f_prev = f_current
+                    continue
+
+            break
+
+        print("Optimization complete. Final results are:")
+
+        for k, v in self.results[step].items():
+            print(k, "=", v)
+
+        print("F =", f_current)
+
+    def _part_vector(self, target_func, search_vector, step):
+
+        subs_vector = {k: v for k, v in self.results[step].items() if k not in search_vector}
+
+        objective = scipy_f_wrap(lambdify(search_vector, target_func.subs(subs_vector)))
+
+        init_vector = [self.results[step][s] for s in search_vector]
+
+        ieqcons_list = []
+        eqcons_list = []
         COND = {}
+        bounds_x = []
 
         for i in range(0, len(search_vector)):
-            constr.append(lambda x, i=i: x[i])
-            COND["X%d" % i] = lambda x, i=i: x[i]
+            ieqcons_list.append(lambda x, i=i: x[i])
+            COND[" >= 0 X%d" % i] = lambda x, i=i: x[i]
+            bounds_x.append((0, 1))
 
         for j in range(1, self.tau + 1):
+
             cond_list = (
-                ("invest_L_{N}".format(N=j), self.COND["invest_L_{N}".format(N=j)]),
-                ("invest_R_{N}".format(N=j), self.COND["invest_R_{N}".format(N=j)]),
-                ("balance_L_{N}".format(N=j), self.COND["balance_L_{N}".format(N=j)]),
-                ("balance_R_{N}".format(N=j), self.COND["balance_R_{N}".format(N=j)]),
-                ("consuming_bound_L_{N}".format(N=j), self.COND["consuming_bound_L_{N}".format(N=j)])
+                ("== 0 invest_M_{N}".format(N=j), self.COND["invest_M_{N}".format(N=j)].subs(subs_vector)),
+                ("== 0 balance_{N}".format(N=j), self.COND["balance_{N}".format(N=j)].subs(subs_vector)),
             )
+
             for name, cond in cond_list:
+                if len(cond.free_symbols) > 0:
+                    f = scipy_f_wrap(lambdify(search_vector, cond))
+                    eqcons_list.append(f)
+                    COND[name] = f
+
+            cond = self.COND["consuming_bound_L_{N}".format(N=j)].subs(subs_vector)
+
+            if len(cond.free_symbols) > 0:
                 f = scipy_f_wrap(lambdify(search_vector, cond))
-                constr.append(f)
-                COND[name] = f
+                ieqcons_list.append(f)
+                COND[" >= 0 consuming_bound_L_{N}".format(N=j)] = f
 
         for j in range(self.tau + 1, self.N + 1):
-            cond_list = (
-                ("invest_old_L_{N}".format(N=j), self.COND["invest_old_L_{N}".format(N=j)]),
-                ("invest_old_R_{N}".format(N=j), self.COND["invest_old_R_{N}".format(N=j)]),
-                ("invest_new_L_{N}".format(N=j), self.COND["invest_new_L_{N}".format(N=j)]),
-                ("invest_new_R_{N}".format(N=j), self.COND["invest_new_R_{N}".format(N=j)]),
-                ("balance_new_L_{N}".format(N=j), self.COND["balance_new_L_{N}".format(N=j)]),
-                ("balance_new_R_{N}".format(N=j), self.COND["balance_new_R_{N}".format(N=j)]),
-                ("consuming_bound_L_{N}".format(N=j), self.COND["consuming_bound_L_{N}".format(N=j)])
-            )
-            for name, cond in cond_list:
-                f = scipy_f_wrap(lambdify(search_vector, cond))
-                constr.append(f)
-                COND[name] = f
 
-        min_vector = fmin_cobyla(objective, np.array(init_vector), constr, rhoend=0.001)
-        self.results[1] = {}
+            cond_list = (
+                ("== 0 invest_old_M_{N}".format(N=j), self.COND["invest_old_M_{N}".format(N=j)].subs(subs_vector)),
+                ("== 0 invest_new_M_{N}".format(N=j), self.COND["invest_new_M_{N}".format(N=j)].subs(subs_vector)),
+                ("== 0 balance_new_{N}".format(N=j), self.COND["balance_new_{N}".format(N=j)].subs(subs_vector))
+            )
+
+            for name, cond in cond_list:
+                if len(cond.free_symbols) > 0:
+                    f = scipy_f_wrap(lambdify(search_vector, cond))
+                    eqcons_list.append(f)
+                    COND[name] = f
+
+            cond = self.COND["consuming_bound_L_{N}".format(N=j)].subs(subs_vector)
+
+            if len(cond.free_symbols) > 0:
+                f = scipy_f_wrap(lambdify(search_vector, cond))
+                ieqcons_list.append(f)
+                COND[" >= 0 consuming_bound_L_{N}".format(N=j)] = f
+
+        min_vector = fmin_slsqp(func=objective,
+                                x0=np.array(init_vector),
+                                eqcons=eqcons_list,
+                                ieqcons=ieqcons_list,
+                                bounds=bounds_x,
+                                full_output=True,
+                                iter=1000,
+                                acc=0.1,
+                                epsilon=0.000001)
+
+        if np.isnan(min_vector[1]):
+            return False
+
+        self.results[step + 1] = {k: v for k, v in self.results[step].items()}
+
         for i, s in enumerate(search_vector):
-            self.results[1].update({s: min_vector[i]})
+            self.results[step + 1].update({s: min_vector[0][i]})
+            print(s, "=", min_vector[0][i])
 
         for name, cond in COND.items():
-            print(name, ">=", cond(min_vector))
+            print(cond(min_vector[0]), name)
 
-
+        return True
 
 
 if __name__ == "__main__":
@@ -373,7 +432,3 @@ if __name__ == "__main__":
     rs.init_equation_system()
     rs.find_initial_vector()
     rs.find_min_vector()
-
-    # TODO make substitution on Lambda
-    # TODO find min Lambda
-    # TODO make external cycle while difference between F_min >= EPS
