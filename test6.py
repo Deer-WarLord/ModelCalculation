@@ -3,20 +3,15 @@ from itertools import chain
 from time import gmtime, strftime
 import numpy as np
 from scipy.optimize import fmin_slsqp
-
 from sympy import *
-
-EPS = 0.001
 
 
 def scipy_f_wrap(f):
-    """
-        Wrapper for f(X) -> f(X[0], X[1])
-    """
     return lambda x: np.array(f(*x))
 
 
 class RearmingSimulation:
+
     def __init__(self):
 
         with open("initial_data.json") as json_file:
@@ -25,12 +20,21 @@ class RearmingSimulation:
 
         self.C = float(self.json_initial_data["C"])
         self.ds = int(1.0 / float(self.json_initial_data["ds"]))
-        self.tau = self.json_initial_data["tau"]
-        self.N = self.tau * 2
+        self.tau = float(self.json_initial_data["tau"])
+        self.N = self.tau * 2.0
+        self.dt = float(self.json_initial_data["dh"])
+        self.nu = float(self.json_initial_data["nu"])
         self.results = {0: {}}
         self.res0 = {}
         self.COND = {}
         self.EQ = {}
+
+    @staticmethod
+    def xfrange(start, stop, step):
+        i = 0
+        while start + i * step < stop:
+            yield start + i * step
+            i += 1
 
     @staticmethod
     def generate_s(size, share):
@@ -46,34 +50,32 @@ class RearmingSimulation:
 
     def init_equation_system(self):
 
-        dt = float(self.json_initial_data["dh"])
-        nu = float(self.json_initial_data["nu"])
-        self.EQ["L_0"] = self.json_initial_data["L0"]
+        self.EQ["L_{N0}".format(N0=0.0)] = self.json_initial_data["L0"]
         self.EQ["a"] = [float(item) for item in self.json_initial_data["a"]]
 
         for i in range(0, 3):
             self.EQ["mu_{i}".format(i=i)] = float(self.json_initial_data["mu"][i])
-            self.EQ["K_old_{i}_0".format(i=i)] = float(self.json_initial_data["K_old_0"][i])
-            self.EQ["L_old_{i}_0".format(i=i)] = float(self.json_initial_data["L_old_0"][i])
+            self.EQ["K_old_{i}_{N0}".format(i=i, N0=0.0)] = float(self.json_initial_data["K_old_0"][i])
+            self.EQ["L_old_{i}_{N0}".format(i=i, N0=0.0)] = float(self.json_initial_data["L_old_0"][i])
             self.EQ["theta_old_{i}".format(i=i)] = float(self.json_initial_data["theta_old"][i])
             self.EQ["A_old_{i}".format(i=i)] = float(self.json_initial_data["A_old"][i])
             self.EQ["alpha_old_{i}".format(i=i)] = float(self.json_initial_data["alpha_old"][i])
             self.EQ["betta_old_{i}".format(i=i)] = float(self.json_initial_data["betta_old"][i])
             self.EQ["a_{i}".format(i=i)] = float(self.json_initial_data["a"][i])
 
-        self.EQ["X_old_1_0"] = self.EQ["A_old_1"] * self.EQ["L_old_1_0"] ** self.EQ["alpha_old_1"] * \
-                               self.EQ["K_old_1_0"] ** self.EQ["betta_old_1"]
+        self.EQ["X_old_1_{N0}".format(N0=0.0)] = self.EQ["A_old_1"] * self.EQ["L_old_1_{N0}".format(N0=0.0)] ** self.EQ["alpha_old_1"] * \
+                               self.EQ["K_old_1_{N0}".format(N0=0.0)] ** self.EQ["betta_old_1"]
 
-        for j in range(1, self.tau + 1):
+        for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
             for i in range(0, 3):
                 self.EQ["su_old_{i}_{N}".format(N=j, i=i)] = symbols("su_old_{i}_{N}".format(N=j, i=i), negative=False)
                 self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
-                                                             self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)] +
+                                                             self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)] +
                                                              self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
-                                                             self.EQ["X_old_1_{pN}".format(pN=j - 1, i=i)]) * dt + \
-                                                            self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)]
+                                                             self.EQ["X_old_1_{pN}".format(pN=j - self.dt, i=i)]) * self.dt + \
+                                                            self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)]
 
-            self.EQ["L_{N}".format(N=j, i=i)] = self.EQ["L_{pN}".format(pN=j - 1, i=i)] * exp(nu * dt)
+            self.EQ["L_{N}".format(N=j, i=i)] = self.EQ["L_{pN}".format(pN=j - self.dt, i=i)] * exp(self.nu * self.dt)
 
             for i in range(0, 3):
                 self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = self.EQ["L_{N}".format(N=j, i=i)] * \
@@ -90,7 +92,7 @@ class RearmingSimulation:
 
             for i in range(0, 3):
                 self.EQ["I_{i}_{N}".format(N=j, i=i)] = self.EQ["st_old_{i}_{N}".format(N=j, i=i)] * \
-                                                        self.EQ["X_old_1_{pN}".format(pN=j - 1, i=i)]
+                                                        self.EQ["X_old_1_{pN}".format(pN=j - self.dt, i=i)]
 
             self.COND["invest_{N}".format(N=j)] = sum([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] +
                                                        self.EQ["st_old_{i}_{N}".format(N=j, i=i)] for i in
@@ -112,9 +114,9 @@ class RearmingSimulation:
             self.EQ["theta_old_{i}_{pN}".format(i=i, pN=self.tau)] = self.EQ["theta_old_{i}".format(i=i)]
             self.EQ["K_new_{i}_{pN}".format(pN=self.tau, i=i)] = 0.0
             self.EQ["L_new_{i}_{pN}".format(pN=self.tau, i=i)] = 0
-            self.EQ["I_{i}_{tau}".format(tau=self.tau + 1, i=i)] = 0.0
-            self.EQ["st_old_{i}_{tau}".format(tau=self.tau + 1, i=i)] = symbols("st_old_{i}_{tau}".format(
-                tau=self.tau + 1, i=i))
+            self.EQ["I_{i}_{tau}".format(tau=self.tau + self.dt, i=i)] = 0.0
+            self.EQ["st_old_{i}_{tau}".format(tau=self.tau + self.dt, i=i)] = symbols("st_old_{i}_{tau}".format(
+                tau=self.tau + self.dt, i=i))
             self.EQ["A_new_{i}".format(i=i)] = float(self.json_initial_data["A_new"][i])
             self.EQ["alpha_new_{i}".format(i=i)] = float(self.json_initial_data["alpha_new"][i])
             self.EQ["betta_new_{i}".format(i=i)] = float(self.json_initial_data["betta_new"][i])
@@ -122,29 +124,29 @@ class RearmingSimulation:
 
         self.EQ["X_new_1_{pN}".format(pN=self.tau)] = 0.0
 
-        for j in range(self.tau + 1, self.N + 1):
+        for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             for i in range(0, 3):
                 self.EQ["st_new_{i}_{N}".format(N=j, i=i)] = symbols("st_new_{i}_{N}".format(N=j, i=i), negative=False)
 
                 self.EQ["K_new_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
-                                                             self.EQ["K_new_{i}_{pN}".format(pN=j - 1, i=i)] +
+                                                             self.EQ["K_new_{i}_{pN}".format(pN=j - self.dt, i=i)] +
                                                              self.EQ["I_{i}_{pN}".format(pN=j - self.tau, i=i)] +
                                                              self.EQ["st_new_{i}_{N}".format(N=j, i=i)] *
-                                                             self.EQ["X_new_1_{pN}".format(pN=j - 1, i=i)]) * dt + \
-                                                            self.EQ["K_new_{i}_{pN}".format(pN=j - 1, i=i)]
+                                                             self.EQ["X_new_1_{pN}".format(pN=j - self.dt, i=i)]) * self.dt + \
+                                                            self.EQ["K_new_{i}_{pN}".format(pN=j - self.dt, i=i)]
 
-            self.EQ["L_{N}".format(N=j)] = self.EQ["L_{pN}".format(pN=j - 1)] * exp(nu * dt)
+            self.EQ["L_{N}".format(N=j)] = self.EQ["L_{pN}".format(pN=j - self.dt)] * exp(self.nu * self.dt)
 
             for i in range(0, 3):
                 self.EQ["L_new_max_{i}_{N}".format(N=j, i=i)] = self.EQ["K_new_{i}_{N}".format(N=j, i=i)] / \
                                                                 self.EQ["k_{i}".format(i=i)]
 
-                self.EQ["L_new_real_{i}_{N}".format(N=j, i=i)] = self.EQ["theta_old_{i}_{pN}".format(i=i, pN=j - 1)] * \
+                self.EQ["L_new_real_{i}_{N}".format(N=j, i=i)] = self.EQ["theta_old_{i}_{pN}".format(i=i, pN=j - self.dt)] * \
                                                                  self.EQ["L_{N}".format(N=j)]
 
-                self.EQ["L_new_{i}_{N}".format(N=j, i=i)] = self.EQ["L_new_{i}_{pN}".format(pN=j - 1, i=i)] + \
+                self.EQ["L_new_{i}_{N}".format(N=j, i=i)] = self.EQ["L_new_{i}_{pN}".format(pN=j - self.dt, i=i)] + \
                                                             Min(self.EQ["L_new_max_{i}_{N}".format(N=j, i=i)] -
-                                                                self.EQ["L_new_{i}_{pN}".format(pN=j - 1, i=i)],
+                                                                self.EQ["L_new_{i}_{pN}".format(pN=j - self.dt, i=i)],
                                                                 self.EQ["L_new_real_{i}_{N}".format(N=j, i=i)])
 
             for i in range(0, 3):
@@ -158,7 +160,7 @@ class RearmingSimulation:
                                                             self.EQ["betta_new_{i}".format(i=i)]
 
             for i in range(0, 3):
-                self.EQ["theta_old_{i}_{N}".format(i=i, N=j)] = self.EQ["theta_old_{i}_{pN}".format(i=i, pN=j - 1)] - \
+                self.EQ["theta_old_{i}_{N}".format(i=i, N=j)] = self.EQ["theta_old_{i}_{pN}".format(i=i, pN=j - self.dt)] - \
                                                                 self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]
 
                 self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = self.EQ["theta_old_{i}_{N}".format(i=i, N=j)] * \
@@ -167,10 +169,10 @@ class RearmingSimulation:
             for i in range(0, 3):
                 self.EQ["su_old_{i}_{N}".format(N=j, i=i)] = symbols("su_old_{i}_{N}".format(N=j, i=i))
                 self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
-                                                             self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)] +
+                                                             self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)] +
                                                              self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
-                                                             self.EQ["X_old_1_{pN}".format(pN=j - 1, i=i)]) * dt + \
-                                                            self.EQ["K_old_{i}_{pN}".format(pN=j - 1, i=i)]
+                                                             self.EQ["X_old_1_{pN}".format(pN=j - self.dt, i=i)]) * self.dt + \
+                                                            self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)]
 
             for i in range(0, 3):
                 self.EQ["X_old_{i}_{N}".format(N=j, i=i)] = self.EQ["A_old_{i}".format(i=i)] * \
@@ -204,7 +206,7 @@ class RearmingSimulation:
 
         print(strftime("%H:%M:%S", gmtime()), "Phase 1 is started")
 
-        for j in range(1, self.tau + 1):
+        for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
             s = None
             consumption = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["X_old_2_{N}".format(N=j)])
             balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
@@ -217,7 +219,8 @@ class RearmingSimulation:
                 print(strftime("%H:%M:%S", gmtime()), "nothing was found")
                 break
             values = [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)]
-            for k in range(j + 1, self.tau + 1):
+
+            for k in self.xfrange(j + self.dt, self.tau + self.dt, self.dt):
                 self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].subs(
                     [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
                 self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].subs(values)
@@ -227,7 +230,7 @@ class RearmingSimulation:
         print(strftime("%H:%M:%S", gmtime()), "Phase 1 is completed")
         print(strftime("%H:%M:%S", gmtime()), "Phase 2 is started")
 
-        for j in range(self.tau + 1, self.N + 1):
+        for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             _st_new, _st_old, _su_old = None, None, None
             consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].subs(self.results[0])
             consumption = lambdify((self.EQ["st_new_2_{N}".format(N=j)],
@@ -285,7 +288,7 @@ class RearmingSimulation:
 
             print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
 
-            for k in range(j + 1, self.N + 1):
+            for k in self.xfrange(j + self.dt, self.N + self.dt, self.dt):
                 self.COND["consuming_bound_{N}".format(N=k)] = \
                     self.COND["consuming_bound_{N}".format(N=k)].subs(self.results[0])
                 self.COND["balance_new_{N}".format(N=k)] = \
@@ -309,7 +312,7 @@ class RearmingSimulation:
 
         while True:
 
-            for j in reversed(range(self.tau + 1, self.N + 1)):
+            for j in reversed(list(self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt))):
 
                 search_vector = [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
                 if not self._part_vector(target_func, search_vector, step):
@@ -341,7 +344,7 @@ class RearmingSimulation:
         for k, v in self.results[step].items():
             print(k, "=", v)
 
-        print("F =", f_current)
+        print("F =", target_func.subs(self.results[step]))
 
     def _part_vector(self, target_func, search_vector, step):
 
@@ -361,7 +364,7 @@ class RearmingSimulation:
             COND[" >= 0 X%d" % i] = lambda x, i=i: x[i]
             bounds_x.append((0, 1))
 
-        for j in range(1, self.tau + 1):
+        for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
 
             cond_list = (
                 ("== 0 invest_M_{N}".format(N=j), self.COND["invest_M_{N}".format(N=j)].subs(subs_vector)),
@@ -381,7 +384,7 @@ class RearmingSimulation:
                 ieqcons_list.append(f)
                 COND[" >= 0 consuming_bound_L_{N}".format(N=j)] = f
 
-        for j in range(self.tau + 1, self.N + 1):
+        for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
 
             cond_list = (
                 ("== 0 invest_old_M_{N}".format(N=j), self.COND["invest_old_M_{N}".format(N=j)].subs(subs_vector)),
@@ -429,6 +432,7 @@ class RearmingSimulation:
 
 if __name__ == "__main__":
     rs = RearmingSimulation()
+    rs.dt = 0.5
     rs.init_equation_system()
     rs.find_initial_vector()
     rs.find_min_vector()
