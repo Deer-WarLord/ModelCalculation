@@ -1,4 +1,5 @@
 import json
+import pickle
 from itertools import chain
 from time import gmtime, strftime
 import numpy as np
@@ -19,7 +20,7 @@ class RearmingSimulation:
             self.json_initial_data = json.loads(initial_data)
 
         self.C = float(self.json_initial_data["C"])
-        self.ds = int(1.0 / float(self.json_initial_data["ds"]))
+        self.ds = int(self.json_initial_data["ds"])
         self.tau = float(self.json_initial_data["tau"])
         self.N = self.tau * 2.0
         self.dt = float(self.json_initial_data["dh"])
@@ -45,8 +46,39 @@ class RearmingSimulation:
                         yield (i * 1.0 / size, j * 1.0 / size, k * 1.0 / size)
 
     @staticmethod
-    def complex2float(val):
-        return val.real if isinstance(val, complex) else val
+    def generate_s_new(num, rb):
+        r = str(rb/num).count("0")
+        for i in np.linspace(0.0, rb, num, True):
+            for j in np.linspace(0.0, rb, num, True):
+                for k in np.linspace(0.0, rb, num, True):
+                    i, j, k = round(i, r), round(j, r), round(k, r)
+                    if round(i + j + k, r) == rb:
+                        yield (i, j, k)
+
+    @staticmethod
+    def around_borders(v, r):
+        lb = v - v / 2.0
+        if lb < 0.0:
+            lb = 0.0
+        rb = v + v / 2.0
+        if rb > 1.0:
+            rb = 1.0
+        elif rb == 0.0:
+            rb = 0.1
+        return round(lb, r), round(rb, r)
+
+    @staticmethod
+    def generate_s_around(num, rb, vector):
+        b = RearmingSimulation.around_borders
+        r = str(rb/num).count("0")
+        visited = set()
+        for i in np.linspace(*b(vector[0], r), num, True):
+            for j in np.linspace(*b(vector[1], r), num, True):
+                for k in np.linspace(*b(vector[2], r), num, True):
+                    i, j, k = round(i, r), round(j, r), round(k, r)
+                    if round(i + j + k, r) == rb and (i, j, k) not in visited:
+                        visited.add((i, j, k))
+                        yield (i, j, k)
 
     def init_equation_system(self):
 
@@ -208,23 +240,36 @@ class RearmingSimulation:
 
         for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
             s = None
+            K_old_0 = lambdify(self.EQ["su_old_0_{N}".format(N=j)], self.EQ["K_old_0_{N}".format(N=j)])
+            K_old_1 = lambdify(self.EQ["su_old_1_{N}".format(N=j)], self.EQ["K_old_1_{N}".format(N=j)])
+            K_old_2 = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["K_old_2_{N}".format(N=j)])
             consumption = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["X_old_2_{N}".format(N=j)])
             balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
                                self.COND["balance_{N}".format(N=j)])
+
             for S_phase_1 in self.generate_s(self.ds, 0.95):
-                if consumption(S_phase_1[2]) >= self.C and -1.0 <= balance(*S_phase_1) <= 1.0:
-                    s = S_phase_1
-                    break
+                if K_old_0(S_phase_1[0]) > 0 and K_old_1(S_phase_1[1]) > 0 and K_old_2(S_phase_1[2]) > 0:
+                    if consumption(S_phase_1[2]) >= self.C and -1.0 <= balance(*S_phase_1) <= 1.0:
+                        s = S_phase_1
+                        break
             if not s:
                 print(strftime("%H:%M:%S", gmtime()), "nothing was found")
                 break
             values = [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)]
 
             for k in self.xfrange(j + self.dt, self.tau + self.dt, self.dt):
+
+                self.EQ["K_old_0_{N}".format(N=k)] = self.EQ["K_old_0_{N}".format(N=k)].subs(values)
+                self.EQ["K_old_1_{N}".format(N=k)] = self.EQ["K_old_1_{N}".format(N=k)].subs(values)
+                self.EQ["K_old_2_{N}".format(N=k)] = self.EQ["K_old_2_{N}".format(N=k)].subs(values)
+
                 self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].subs(
                     [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
+
                 self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].subs(values)
+
             print(strftime("%H:%M:%S", gmtime()), "step {j} s: {s}".format(j=j, s=s))
+
             self.results[0].update({self.EQ["su_old_{i}_{N}".format(N=j, i=i)]: s[i] for i in range(0, 3)})
 
         print(strftime("%H:%M:%S", gmtime()), "Phase 1 is completed")
@@ -232,6 +277,16 @@ class RearmingSimulation:
 
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             _st_new, _st_old, _su_old = None, None, None
+
+            K_new_0_subs = self.EQ["K_new_0_{N}".format(N=j)].subs(self.results[0])
+            K_new_0 = lambdify([self.EQ["st_old_0_{N}".format(N=j - self.tau)], self.EQ["st_new_0_{N}".format(N=j)]], K_new_0_subs)
+
+            K_new_1_subs = self.EQ["K_new_1_{N}".format(N=j)].subs(self.results[0])
+            K_new_1 = lambdify([self.EQ["st_old_1_{N}".format(N=j - self.tau)], self.EQ["st_new_1_{N}".format(N=j)]], K_new_1_subs)
+
+            K_new_2_subs = self.EQ["K_new_2_{N}".format(N=j)].subs(self.results[0])
+            K_new_2 = lambdify([self.EQ["st_old_2_{N}".format(N=j - self.tau)], self.EQ["st_new_2_{N}".format(N=j)]], K_new_2_subs)
+
             consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].subs(self.results[0])
             consumption = lambdify((self.EQ["st_new_2_{N}".format(N=j)],
                                     self.EQ["su_old_2_{N}".format(N=j)],
@@ -249,18 +304,20 @@ class RearmingSimulation:
 
                 for st_old in self.generate_s(self.ds * 5, 0.05):
 
-                    b = balance(*chain(st_new, st_old))
+                    if K_new_0(st_old[0], st_new[0]) >= 0 and K_new_1(st_old[1], st_new[1]) >= 0 and K_new_2(st_old[2], st_new[2]) >= 0:
 
-                    # if abs(b) < 10:
-                    #     print("b =", b, "st_old =", st_old, "st_new =", st_new)
+                        b = balance(*chain(st_new, st_old))
 
-                    if -1.0 <= round(b, 1) <= 1.0:
-                        _st_new, _st_old = st_new, st_old
+                        # if abs(b) < 10:
+                        #     print("b =", b, "st_old =", st_old, "st_new =", st_new)
 
-                        for su_old in self.generate_s(self.ds, 1.0):
-                            if self.complex2float(consumption(st_new[2], su_old[2], st_old[2])) >= self.C:
-                                _su_old = su_old
-                                break
+                        if -1.0 <= round(b, 1) <= 1.0:
+                            _st_new, _st_old = st_new, st_old
+
+                            for su_old in self.generate_s(self.ds, 1.0):
+                                if consumption(st_new[2], su_old[2], st_old[2]) >= self.C:
+                                    _su_old = su_old
+                                    break
 
                     if _su_old:
                         break
@@ -298,6 +355,203 @@ class RearmingSimulation:
                                 self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]) for i in range(0, 3)])
 
             print(strftime("%H:%M:%S", gmtime()), "F =", target_func.subs(self.results[0]))
+
+        print(strftime("%H:%M:%S", gmtime()), "Phase 2 is completed")
+
+    def find_initial_vector_using_prev(self, prev_dt):
+        print(strftime("%H:%M:%S", gmtime()), "Phase 1 is started")
+
+        prev_vector = self.results[len(self.results)-1]
+        s_state = {}
+        generators = []
+        borders = []
+        added = set()
+
+        for j in self.xfrange(prev_dt, self.tau + prev_dt, prev_dt):
+            v = tuple(prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3))
+            b = round(sum(v), 2)
+            borders.append(b)
+            if v not in added:
+                generators.append(self.generate_s_around(self.ds / 2, b, v))
+                added.add(v)
+
+        generators += [self.generate_s_new(self.ds, b) for b in borders]
+
+        is_complete = True
+
+        self.results_next = {0: {}}
+
+        for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
+            s = None
+            K_old_0 = lambdify(self.EQ["su_old_0_{N}".format(N=j)], self.EQ["K_old_0_{N}".format(N=j)])
+            K_old_1 = lambdify(self.EQ["su_old_1_{N}".format(N=j)], self.EQ["K_old_1_{N}".format(N=j)])
+            K_old_2 = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["K_old_2_{N}".format(N=j)])
+            consumption = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["X_old_2_{N}".format(N=j)])
+            balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
+                               self.COND["balance_{N}".format(N=j)])
+
+            for S_phase_1 in chain(*generators):
+                if K_old_0(S_phase_1[0]) > 0 and K_old_1(S_phase_1[1]) > 0 and K_old_2(S_phase_1[2]) > 0:
+                    if consumption(S_phase_1[2]) >= self.C and -1.0 <= balance(*S_phase_1) <= 1.0:
+                        s = S_phase_1
+                        break
+            if not s:
+                print(strftime("%H:%M:%S", gmtime()), "nothing was found")
+                is_complete = False
+                break
+            values = [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)]
+
+            for k in self.xfrange(j + self.dt, self.tau + self.dt, self.dt):
+
+                self.EQ["K_old_0_{N}".format(N=k)] = self.EQ["K_old_0_{N}".format(N=k)].subs(values)
+                self.EQ["K_old_1_{N}".format(N=k)] = self.EQ["K_old_1_{N}".format(N=k)].subs(values)
+                self.EQ["K_old_2_{N}".format(N=k)] = self.EQ["K_old_2_{N}".format(N=k)].subs(values)
+
+                self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].subs(
+                    [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
+
+                self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].subs(values)
+
+            print(strftime("%H:%M:%S", gmtime()), "step {j} s: {s}".format(j=j, s=s))
+
+            self.results_next[0].update({self.EQ["su_old_{i}_{N}".format(N=j, i=i)]: s[i] for i in range(0, 3)})
+
+            s_state[j] = round(sum(s), 2)
+
+        if not is_complete:
+            print(strftime("%H:%M:%S", gmtime()), "Phase 1 isn't completed")
+            return
+
+        print(strftime("%H:%M:%S", gmtime()), "Phase 1 is completed")
+        print(strftime("%H:%M:%S", gmtime()), "Phase 2 is started")
+
+        ranges = {}
+
+        for j in self.xfrange(self.tau + prev_dt, self.N + prev_dt, prev_dt):
+            v = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]] for i in range(0, 3)]
+            b = round(sum(v), 2)
+            ranges[b] = (
+                list(self.generate_s_around(self.ds, b, v)),
+                # self.generate_s_new(self.ds * 5, b)
+            )
+
+        for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
+            _st_new, _st_old, _su_old = None, None, None
+
+            K_new_0_subs = self.EQ["K_new_0_{N}".format(N=j)].subs(self.results_next[0])
+            K_new_0 = lambdify([self.EQ["st_old_0_{N}".format(N=j - self.tau)], self.EQ["st_new_0_{N}".format(N=j)]], K_new_0_subs)
+
+            K_new_1_subs = self.EQ["K_new_1_{N}".format(N=j)].subs(self.results_next[0])
+            K_new_1 = lambdify([self.EQ["st_old_1_{N}".format(N=j - self.tau)], self.EQ["st_new_1_{N}".format(N=j)]], K_new_1_subs)
+
+            K_new_2_subs = self.EQ["K_new_2_{N}".format(N=j)].subs(self.results_next[0])
+            K_new_2 = lambdify([self.EQ["st_old_2_{N}".format(N=j - self.tau)], self.EQ["st_new_2_{N}".format(N=j)]], K_new_2_subs)
+
+            consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].subs(self.results_next[0])
+            consumption = lambdify((self.EQ["st_new_2_{N}".format(N=j)],
+                                    self.EQ["su_old_2_{N}".format(N=j)],
+                                    self.EQ["st_old_2_{tau}".format(tau=j - self.tau)]), consumption_subs)
+
+            balance_subs = self.COND["balance_new_{N}".format(N=j)].subs(self.results_next[0])
+            balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
+                                self.EQ["st_new_1_{N}".format(N=j)],
+                                self.EQ["st_new_2_{N}".format(N=j)],
+                                self.EQ["st_old_0_{N}".format(N=j - self.tau)],
+                                self.EQ["st_old_1_{N}".format(N=j - self.tau)],
+                                self.EQ["st_old_2_{N}".format(N=j - self.tau)]], balance_subs)
+
+            st_old_generators = ranges[round(1.0 - s_state[j - self.tau], 2)]
+
+            try:
+                st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3)]
+                su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3)]
+            except Exception as e:
+                st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
+                su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
+
+            st_new_generators = (
+                list(self.generate_s_around(self.ds / 2, 1.0, st_new_0)),
+                # self.generate_s_new(int(self.ds / 4), 1.0)
+            )
+
+            step = 0
+            attempts = 6
+            lb, rb = -1.0, 1.0
+            cons = self.C / 1.5
+
+            while step <= attempts:
+                b_min = 1000
+                for st_new in chain(*st_new_generators):
+
+                    for st_old in chain(*st_old_generators):
+
+                        if K_new_0(st_old[0], st_new[0]) >= 0 and K_new_1(st_old[1], st_new[1]) >= 0 and K_new_2(st_old[2], st_new[2]) >= 0:
+
+                            b = balance(*chain(st_new, st_old))
+
+                            # if abs(b) < rb * 2:
+                            #     print("b =", b, "st_old =", st_old, "st_new =", st_new)
+
+                            if lb <= round(b, 1) <= rb:
+                                if abs(b) < abs(b_min):
+                                    c_max = - cons
+                                    for su_old in chain(self.generate_s_around(self.ds / 2, 1.0, su_old_0)):
+
+                                        c = consumption(st_new[2], su_old[2], st_old[2]) - cons
+
+                                        if c >= 0 and c > c_max:
+                                            _st_new, _st_old, _su_old = st_new, st_old, su_old
+                                            b_min = abs(b)
+                                            c_max = c
+                                            print("***st_new st_old su_old were found***")
+                                            print("b =", b,
+                                                  "c =", c,
+                                                  "st_new =", st_new,
+                                                  "su_old =", su_old,
+                                                  "st_old =", st_old)
+
+                if b_min != 1000:
+                    break
+
+                step += 1
+                lb = lb * 2
+                rb = rb * 2
+                cons = cons / 1.5
+                print(strftime("%H:%M:%S", gmtime()), "extending bounds to [%s; %s]" % (lb, rb))
+
+            if not _su_old:
+                print("nothing was found")
+                break
+
+            print(strftime("%H:%M:%S", gmtime()),
+                  "step {j} st_new: {st_new} su_old: {su_old} st_old: {st_old}".format(j=j,
+                                                                                       st_new=_st_new,
+                                                                                       su_old=_su_old,
+                                                                                       st_old=_st_old))
+
+            for i in range(0, 3):
+                self.results_next[0].update({self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]: _st_old[i]})
+                self.results_next[0].update({self.EQ["su_old_{i}_{N}".format(i=i, N=j)]: _su_old[i]})
+                self.results_next[0].update({self.EQ["st_new_{i}_{N}".format(i=i, N=j)]: _st_new[i]})
+
+            l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].subs(self.results_next[0]) for i in range(0, 3)]
+            l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].subs(self.results_next[0]) for i in range(0, 3)]
+
+            print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
+
+            for k in self.xfrange(j + self.dt, self.N + self.dt, self.dt):
+                self.COND["consuming_bound_{N}".format(N=k)] = \
+                    self.COND["consuming_bound_{N}".format(N=k)].subs(self.results_next[0])
+                print(strftime("%H:%M:%S", gmtime()), "Edited consuming_bound_{N}".format(N=k))
+
+                self.COND["balance_new_{N}".format(N=k)] = \
+                    self.COND["balance_new_{N}".format(N=k)].subs(self.results_next[0])
+                print(strftime("%H:%M:%S", gmtime()), "Edited balance_new_{N}".format(N=k))
+
+            target_func = sum([(self.EQ["theta_old_{i}".format(i=i)] -
+                                self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]) for i in range(0, 3)])
+
+            print(strftime("%H:%M:%S", gmtime()), "F =", target_func.subs(self.results_next[0]))
 
         print(strftime("%H:%M:%S", gmtime()), "Phase 2 is completed")
 
@@ -429,10 +683,26 @@ class RearmingSimulation:
 
         return True
 
+    def save(self):
+        with open('results.pickle', 'wb') as handle:
+            pickle.dump(self.results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        print(strftime("%H:%M:%S", gmtime()), "Saved result vector to file")
+
+    def load(self):
+        with open('results.pickle', 'rb') as handle:
+            self.results = pickle.load(handle)
+        print(strftime("%H:%M:%S", gmtime()), "Loaded result vector from file")
+
 
 if __name__ == "__main__":
     rs = RearmingSimulation()
+    # rs.dt = 1.0
+    # rs.init_equation_system()
+    # rs.find_initial_vector()
+    # rs.find_min_vector()
+    # rs.save()
+
+    rs.load()
     rs.dt = 0.5
     rs.init_equation_system()
-    rs.find_initial_vector()
-    rs.find_min_vector()
+    rs.find_initial_vector_using_prev(1.0)
