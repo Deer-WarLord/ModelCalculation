@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 from pprint import pprint
 
@@ -28,4 +30,12 @@ def generate_s_around(num, rb, vector):
 
 
 if __name__ == "__main__":
-    pprint(list(generate_s_around(50, 1.0, (0.0, 0.0, 1.0))))
+    # pprint(list(generate_s_around(50, 1.0, (0.0, 0.0, 1.0))))
+    with open("tau2N4dt1.json") as json_file:
+        data = json_file.read()
+        r1 = json.loads(data)
+
+    with open("tau2N4dt05.json") as json_file:
+        data = json_file.read()
+        r2 = json.loads(data)
+
