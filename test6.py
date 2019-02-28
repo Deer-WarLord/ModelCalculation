@@ -46,13 +46,13 @@ class RearmingSimulation:
 
     @staticmethod
     def generate_s_new(num, rb):
-        r = str(rb / num).count("0")
+        # NEED TO BE VERY CAREFUL
+        r = str(np.true_divide([rb], num)).count("0")
         for i in np.linspace(0.0, rb, num, True):
             for j in np.linspace(0.0, rb, num, True):
-                for k in np.linspace(0.0, rb, num, True):
-                    i, j, k = round(i, r), round(j, r), round(k, r)
-                    if round(i + j + k, r) == rb:
-                        yield (i, j, k)
+                if i + j <= rb:
+                    i, j, k = round(i, r), round(j, r), round(rb - i - j, r)
+                    yield (i, j, k)
 
     @staticmethod
     def around_borders(v, r):
@@ -69,13 +69,14 @@ class RearmingSimulation:
     @staticmethod
     def generate_s_around(num, rb, vector):
         b = RearmingSimulation.around_borders
-        r = str(rb / num).count("0")
+        # NEED TO BE VERY CAREFUL
+        r = str(np.true_divide([rb], num)).count("0")
         visited = set()
         for i in np.linspace(*b(vector[0], r), num, True):
             for j in np.linspace(*b(vector[1], r), num, True):
-                for k in np.linspace(*b(vector[2], r), num, True):
-                    i, j, k = round(i, r), round(j, r), round(k, r)
-                    if round(i + j + k, r) == rb and (i, j, k) not in visited:
+                if i + j < rb:
+                    i, j, k = round(i, r), round(j, r), round(rb - i - j, r)
+                    if (i, j, k) not in visited:
                         visited.add((i, j, k))
                         yield (i, j, k)
 
@@ -174,17 +175,11 @@ class RearmingSimulation:
             self.EQ["L_{N}".format(N=j)] = self.EQ["L_{pN}".format(pN=j - self.dt)] * exp(self.nu * self.dt)
 
             for i in range(0, 3):
-                self.EQ["L_new_max_{i}_{N}".format(N=j, i=i)] = self.EQ["K_new_{i}_{N}".format(N=j, i=i)] / \
-                                                                self.EQ["k_{i}".format(i=i)]
+                self.EQ["L_new_{i}_{N}".format(N=j, i=i)] = self.EQ["K_new_{i}_{N}".format(N=j, i=i)] / \
+                                                            self.EQ["k_{i}".format(i=i)]
 
-                self.EQ["L_new_real_{i}_{N}".format(N=j, i=i)] = self.EQ[
-                                                                     "theta_old_{i}_{pN}".format(i=i, pN=j - self.dt)] * \
-                                                                 self.EQ["L_{N}".format(N=j)]
-
-                self.EQ["L_new_{i}_{N}".format(N=j, i=i)] = self.EQ["L_new_{i}_{pN}".format(pN=j - self.dt, i=i)] + \
-                                                            Min(self.EQ["L_new_max_{i}_{N}".format(N=j, i=i)] -
-                                                                self.EQ["L_new_{i}_{pN}".format(pN=j - self.dt, i=i)],
-                                                                self.EQ["L_new_real_{i}_{N}".format(N=j, i=i)])
+            self.COND["L_balance_{N}".format(N=j)] = self.EQ["L_{N}".format(N=j)] - \
+                                                     sum(self.EQ["L_new_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)) # >0
 
             for i in range(0, 3):
                 self.EQ["theta_new_{i}_{N}".format(N=j, i=i)] = self.EQ["L_new_{i}_{N}".format(N=j, i=i)] / \
@@ -255,7 +250,7 @@ class RearmingSimulation:
             balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
                                self.COND["balance_{N}".format(N=j)])
 
-            for S_phase_1 in self.generate_s(self.ds, 0.95):
+            for S_phase_1 in self.generate_s(self.ds, 0.7):
                 if K_old_0(S_phase_1[0]) > 0 and K_old_1(S_phase_1[1]) > 0 and K_old_2(S_phase_1[2]) > 0:
                     if consumption(S_phase_1[2]) >= self.C and -1.0 <= balance(*S_phase_1) <= 1.0:
                         s = S_phase_1
@@ -299,6 +294,15 @@ class RearmingSimulation:
             K_new_2 = lambdify([self.EQ["st_old_2_{N}".format(N=j - self.tau)], self.EQ["st_new_2_{N}".format(N=j)]],
                                K_new_2_subs)
 
+            L_balance_subs = self.COND["L_balance_{N}".format(N=j)].subs(self.results[0])
+
+            L_balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
+                                  self.EQ["st_new_1_{N}".format(N=j)],
+                                  self.EQ["st_new_2_{N}".format(N=j)],
+                                  self.EQ["st_old_0_{N}".format(N=j - self.tau)],
+                                  self.EQ["st_old_1_{N}".format(N=j - self.tau)],
+                                  self.EQ["st_old_2_{N}".format(N=j - self.tau)]], L_balance_subs)
+
             consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].subs(self.results[0])
             consumption = lambdify((self.EQ["st_new_0_{N}".format(N=j)],
                                     self.EQ["st_new_1_{N}".format(N=j)],
@@ -318,15 +322,16 @@ class RearmingSimulation:
 
             for st_new in self.generate_s(int(self.ds / 4), 1.0):
 
-                for st_old in self.generate_s(self.ds * 5, 0.05):
+                for st_old in self.generate_s(self.ds, 0.3):
 
-                    if K_new_0(st_old[0], st_new[0]) >= 0 and K_new_1(st_old[1], st_new[1]) >= 0 and K_new_2(st_old[2],
-                                                                                                             st_new[
-                                                                                                                 2]) >= 0:
+                    if K_new_0(st_old[0], st_new[0]) >= 0 and \
+                       K_new_1(st_old[1], st_new[1]) >= 0 and \
+                       K_new_2(st_old[2], st_new[2]) >= 0 and \
+                       L_balance(*chain(st_new, st_old)) >= 0:
 
                         b = balance(*chain(st_new, st_old))
 
-                        if abs(b) < 10:
+                        if abs(b) < 5:
                             print("b =", b, "st_old =", st_old, "st_new =", st_new)
 
                         if -1.0 <= round(b, 1) <= 1.0:
@@ -364,12 +369,6 @@ class RearmingSimulation:
 
             print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
 
-            for k in self.xfrange(j + self.dt, self.N + self.dt, self.dt):
-                self.COND["consuming_bound_{N}".format(N=k)] = \
-                    self.COND["consuming_bound_{N}".format(N=k)].subs(self.results[0])
-                self.COND["balance_new_{N}".format(N=k)] = \
-                    self.COND["balance_new_{N}".format(N=k)].subs(self.results[0])
-
             target_func = sum([(self.EQ["theta_old_{i}".format(i=i)] -
                                 self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]) for i in range(0, 3)])
 
@@ -383,19 +382,17 @@ class RearmingSimulation:
 
         prev_vector = self.results[len(self.results) - 1]
         s_state = {}
-        generators = []
-        borders = []
-        added = set()
+        generators = {}
+        prev_s_state = {}
 
         for j in self.xfrange(prev_dt, prev_tau + prev_dt, prev_dt):
             v = tuple(prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3))
             b = round(sum(v), 2)
-            borders.append(b)
-            if v not in added:
-                generators.append(list(self.generate_s_around(self.ds / 2, b, v)))
-                added.add(v)
+            generators[j - self.dt] = list(self.generate_s_around(self.ds, b, v))
+            generators[j] = list(self.generate_s_around(self.ds, b, v))
+            prev_s_state[j - self.dt] = v
+            prev_s_state[j] = v
 
-        # generators += [self.generate_s_new(self.ds, b) for b in borders]
 
         is_complete = True
 
@@ -410,14 +407,15 @@ class RearmingSimulation:
             balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
                                self.COND["balance_{N}".format(N=j)])
 
-            b_min = 1000
-            for S_phase_1 in chain(*generators):
+            f_min = 1000
+            for S_phase_1 in generators[j]:
                 if K_old_0(S_phase_1[0]) > 0 and K_old_1(S_phase_1[1]) > 0 and K_old_2(S_phase_1[2]) > 0:
                     b = balance(*S_phase_1)
                     if -1.0 <= b <= 1.0 and consumption(S_phase_1[2]) >= self.C:
-                        if abs(b) < b_min:
+                        f = sum(map(lambda x: x**2, np.subtract(S_phase_1, prev_s_state[j])))
+                        if f < f_min:
                             s = S_phase_1
-                            b_min = abs(b)
+                            f_min = f
             if not s:
                 print(strftime("%H:%M:%S", gmtime()), "nothing was found")
                 is_complete = False
@@ -447,16 +445,15 @@ class RearmingSimulation:
         print(strftime("%H:%M:%S", gmtime()), "Phase 1 is completed")
         print(strftime("%H:%M:%S", gmtime()), "Phase 2 is started")
 
-        ranges = {}
+        generators = {}
         is_complete = True
 
         for j in self.xfrange(prev_tau + prev_dt, prev_N + prev_dt, prev_dt):
             v = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]] for i in range(0, 3)]
             b = round(sum(v), 2)
-            ranges[b] = (
-                list(self.generate_s_around(self.ds, b, v)),
-                # self.generate_s_new(self.ds * 5, b)
-            )
+            generators[j - self.dt] = list(self.generate_s_around(self.ds, b, v))
+            generators[j] = list(self.generate_s_around(self.ds, b, v))
+
 
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             _st_new, _st_old, _su_old = None, None, None
@@ -472,6 +469,15 @@ class RearmingSimulation:
             K_new_2_subs = self.EQ["K_new_2_{N}".format(N=j)].subs(self.results_next[0])
             K_new_2 = lambdify([self.EQ["st_old_2_{N}".format(N=j - self.tau)], self.EQ["st_new_2_{N}".format(N=j)]],
                                K_new_2_subs)
+
+            L_balance_subs = self.COND["L_balance_{N}".format(N=j)].subs(self.results_next[0])
+
+            L_balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
+                                  self.EQ["st_new_1_{N}".format(N=j)],
+                                  self.EQ["st_new_2_{N}".format(N=j)],
+                                  self.EQ["st_old_0_{N}".format(N=j - self.tau)],
+                                  self.EQ["st_old_1_{N}".format(N=j - self.tau)],
+                                  self.EQ["st_old_2_{N}".format(N=j - self.tau)]], L_balance_subs)
 
             consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].subs(self.results_next[0])
             consumption = lambdify((self.EQ["st_new_0_{N}".format(N=j)],
@@ -490,59 +496,54 @@ class RearmingSimulation:
                                 self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                 self.EQ["st_old_2_{N}".format(N=j - self.tau)]], balance_subs)
 
-            if prev_N == self.N and prev_tau == self.tau:
-                st_old_generators = ranges[round(1.0 - s_state[j - self.tau], 2)]
-            else:
-                st_old_generators = ranges[round(1.0 - s_state[j - self.tau - (self.N - prev_N)], 2)]
-
             try:
                 st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3)]
                 su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3)]
+                st_old_0 = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]] for i in range(0, 3)]
             except Exception as e:
-                try:
-                    st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
-                    su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
-                except Exception as e1:
-                    st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j - self.dt)]] for i in range(0, 3)]
-                    su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.dt)]] for i in range(0, 3)]
+                st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
+                su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
+                st_old_0 = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau + self.dt)]] for i in range(0, 3)]
 
-            st_new_generators = (
-                list(self.generate_s_around(self.ds / 2, 1.0, st_new_0)),
-                # self.generate_s_new(int(self.ds / 4), 1.0)
-            )
+            st_new_generators = list(self.generate_s_around(self.ds / 2, 1.0, st_new_0))
 
             step = 0
             attempts = 6
             lb, rb = -1.0, 1.0
-            cons = self.C / 1.5
+            cons = self.C
 
             while step <= attempts:
-                b_min = 1000
-                for st_new in chain(*st_new_generators):
+                ft_min = 1000
+                for st_new in st_new_generators:
 
-                    for st_old in chain(*st_old_generators):
+                    for st_old in generators[j]:
 
-                        if K_new_0(st_old[0], st_new[0]) >= 0 and K_new_1(st_old[1], st_new[1]) >= 0 and K_new_2(
-                                st_old[2], st_new[2]) >= 0:
+                        if K_new_0(st_old[0], st_new[0]) >= 0 and \
+                           K_new_1(st_old[1], st_new[1]) >= 0 and \
+                           K_new_2(st_old[2], st_new[2]) >= 0 and \
+                           L_balance(*chain(st_new, st_old)) >= 0:
 
                             b = balance(*chain(st_new, st_old))
 
-                            if lb <= round(b, 1) <= rb:
-                                if abs(b) < abs(b_min):
-                                    c_max = - cons
+                            if lb <= round(b, 4) <= rb:
+                                ft = sum(map(lambda x: x**2, np.subtract(st_old, st_old_0)))
+                                if ft < ft_min:
+
+                                    fu_min = 1000
                                     for su_old in chain(self.generate_s_around(self.ds / 2, 1.0, su_old_0)):
 
                                         c = consumption(*chain(st_new, [su_old[2]], st_old)) - cons
 
-                                        if c >= 0 and c > c_max:
-                                            _st_new, _st_old, _su_old = st_new, st_old, su_old
-                                            b_min = abs(b)
-                                            c_max = c
-                                            # print("***st_new st_old su_old were found***")
-                                            # print("b =", b, "c =", c, "st_new =", st_new, "su_old =", su_old,
-                                            #       "st_old =", st_old)
+                                        if c >= 0:
+                                            fu = sum(map(lambda x: x**2, np.subtract(su_old, su_old_0)))
+                                            if fu < fu_min:
+                                                _st_new, _st_old, _su_old = st_new, st_old, su_old
+                                                fu_min = fu
+                                                # print("***st_new st_old su_old were found***")
+                                                # print("b =", b, "c =", c, "st_new =", st_new, "su_old =", su_old,
+                                                #       "st_old =", st_old)
 
-                if b_min != 1000:
+                if ft_min != 1000:
                     break
 
                 step += 1
@@ -571,15 +572,6 @@ class RearmingSimulation:
             l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].subs(self.results_next[0]) for i in range(0, 3)]
 
             print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
-
-            for k in self.xfrange(j + self.dt, self.N + self.dt, self.dt):
-                self.COND["consuming_bound_{N}".format(N=k)] = \
-                    self.COND["consuming_bound_{N}".format(N=k)].subs(self.results_next[0])
-                print(strftime("%H:%M:%S", gmtime()), "Edited consuming_bound_{N}".format(N=k))
-
-                self.COND["balance_new_{N}".format(N=k)] = \
-                    self.COND["balance_new_{N}".format(N=k)].subs(self.results_next[0])
-                print(strftime("%H:%M:%S", gmtime()), "Edited balance_new_{N}".format(N=k))
 
             target_func = sum([(self.EQ["theta_old_{i}".format(i=i)] -
                                 self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]) for i in range(0, 3)])
@@ -712,6 +704,13 @@ class RearmingSimulation:
                 ieqcons_list.append(f)
                 COND[" >= 0 consuming_bound_L_{N}".format(N=j)] = f
 
+            cond = self.COND["L_balance_{N}".format(N=j)].subs(subs_vector)
+
+            if len(cond.free_symbols) > 0:
+                f = scipy_f_wrap(lambdify(search_vector, cond))
+                ieqcons_list.append(f)
+                COND[" >= 0 L_balance_{N}".format(N=j)] = f
+
         min_vector = fmin_slsqp(func=objective,
                                 x0=np.array(init_vector),
                                 eqcons=eqcons_list,
@@ -770,3 +769,12 @@ if __name__ == "__main__":
             # rs.save_pickle(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.labor, "labor_tau2N4dt05")
+
+            rs.dt = 0.25
+            rs.init_equation_system()
+            rs.results = rs.results_next
+            if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
+                rs.find_min_vector(rs.results_next)
+                # rs.save_pickle(rs.results_next, "tau2N4dt05")
+                rs.save_json(rs.results_next, "tau2N4dt025")
+                rs.save_json(rs.labor, "labor_tau2N4dt025")
