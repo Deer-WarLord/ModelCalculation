@@ -26,8 +26,6 @@ class RearmingSimulation:
         self.nu = float(self.json_initial_data["nu"])
         self.results = {0: {}}
         self.res0 = {}
-        self.COND = {}
-        self.EQ = {}
 
     @staticmethod
     def xfrange(start, stop, step):
@@ -72,6 +70,7 @@ class RearmingSimulation:
         # NEED TO BE VERY CAREFUL
         r = str(np.true_divide([rb], num)).count("0")
         visited = set()
+        yield vector
         for i in np.linspace(*b(vector[0], r), num, True):
             for j in np.linspace(*b(vector[1], r), num, True):
                 if i + j < rb:
@@ -82,8 +81,9 @@ class RearmingSimulation:
 
     def init_equation_system(self):
 
-        self.EQ["L_{N0}".format(N0=0.0)] = self.json_initial_data["L0"]
-        self.EQ["a"] = [float(item) for item in self.json_initial_data["a"]]
+        self.COND = {}
+        self.EQ = {"L_{N0}".format(N0=0.0): self.json_initial_data["L0"],
+                   "a": [float(item) for item in self.json_initial_data["a"]]}
 
         for i in range(0, 3):
             self.EQ["mu_{i}".format(i=i)] = float(self.json_initial_data["mu"][i])
@@ -148,9 +148,6 @@ class RearmingSimulation:
             self.EQ["theta_old_{i}_{pN}".format(i=i, pN=self.tau)] = self.EQ["theta_old_{i}".format(i=i)]
             self.EQ["K_new_{i}_{pN}".format(pN=self.tau, i=i)] = 0.0
             self.EQ["L_new_{i}_{pN}".format(pN=self.tau, i=i)] = 0
-            self.EQ["I_{i}_{tau}".format(tau=self.tau + self.dt, i=i)] = 0.0
-            self.EQ["st_old_{i}_{tau}".format(tau=self.tau + self.dt, i=i)] = symbols("st_old_{i}_{tau}".format(
-                tau=self.tau + self.dt, i=i))
             self.EQ["A_new_{i}".format(i=i)] = float(self.json_initial_data["A_new"][i])
             self.EQ["alpha_new_{i}".format(i=i)] = float(self.json_initial_data["alpha_new"][i])
             self.EQ["betta_new_{i}".format(i=i)] = float(self.json_initial_data["betta_new"][i])
@@ -388,8 +385,8 @@ class RearmingSimulation:
         for j in self.xfrange(prev_dt, prev_tau + prev_dt, prev_dt):
             v = tuple(prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3))
             b = round(sum(v), 2)
-            generators[j - self.dt] = list(self.generate_s_around(self.ds, b, v))
-            generators[j] = list(self.generate_s_around(self.ds, b, v))
+            generators[j - self.dt] = self.generate_s_around(self.ds, b, v)
+            generators[j] = self.generate_s_around(self.ds, b, v)
             prev_s_state[j - self.dt] = v
             prev_s_state[j] = v
 
@@ -447,6 +444,8 @@ class RearmingSimulation:
 
         generators = {}
         is_complete = True
+        lb = -128.0
+        rb = 128.0
 
         for j in self.xfrange(prev_tau + prev_dt, prev_N + prev_dt, prev_dt):
             v = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]] for i in range(0, 3)]
@@ -505,52 +504,28 @@ class RearmingSimulation:
                 su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
                 st_old_0 = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau + self.dt)]] for i in range(0, 3)]
 
-            st_new_generators = list(self.generate_s_around(self.ds / 2, 1.0, st_new_0))
+            st_new_generator = self.generate_s_around(self.ds / 2, 1.0, st_new_0)
+            su_old_generator = list(self.generate_s_around(self.ds / 2, 1.0, su_old_0))
 
-            step = 0
-            attempts = 6
-            lb, rb = -1.0, 1.0
-            cons = self.C
+            f_min = 1000
 
-            while step <= attempts:
-                ft_min = 1000
-                for st_new in st_new_generators:
-
-                    for st_old in generators[j]:
-
-                        if K_new_0(st_old[0], st_new[0]) >= 0 and \
-                           K_new_1(st_old[1], st_new[1]) >= 0 and \
-                           K_new_2(st_old[2], st_new[2]) >= 0 and \
-                           L_balance(*chain(st_new, st_old)) >= 0:
-
-                            b = balance(*chain(st_new, st_old))
-
-                            if lb <= round(b, 4) <= rb:
-                                ft = sum(map(lambda x: x**2, np.subtract(st_old, st_old_0)))
-                                if ft < ft_min:
-
-                                    fu_min = 1000
-                                    for su_old in chain(self.generate_s_around(self.ds / 2, 1.0, su_old_0)):
-
-                                        c = consumption(*chain(st_new, [su_old[2]], st_old)) - cons
-
-                                        if c >= 0:
-                                            fu = sum(map(lambda x: x**2, np.subtract(su_old, su_old_0)))
-                                            if fu < fu_min:
-                                                _st_new, _st_old, _su_old = st_new, st_old, su_old
-                                                fu_min = fu
-                                                # print("***st_new st_old su_old were found***")
-                                                # print("b =", b, "c =", c, "st_new =", st_new, "su_old =", su_old,
-                                                #       "st_old =", st_old)
-
-                if ft_min != 1000:
-                    break
-
-                step += 1
-                lb = lb * 2
-                rb = rb * 2
-                cons = cons / 1.5
-                print(strftime("%H:%M:%S", gmtime()), "extending bounds to [%s; %s]" % (lb, rb))
+            for st_new in st_new_generator:
+                for st_old in generators[j]:
+                    if K_new_0(st_old[0], st_new[0]) >= 0 and \
+                       K_new_1(st_old[1], st_new[1]) >= 0 and \
+                       K_new_2(st_old[2], st_new[2]) >= 0 and \
+                       L_balance(*chain(st_new, st_old)) >= 0:
+                        b = balance(*chain(st_new, st_old))
+                        if lb <= round(b, 4) <= rb:
+                            for su_old in su_old_generator:
+                                c = consumption(*chain(st_new, [su_old[2]], st_old)) - self.C
+                                if c >= 0:
+                                    f_cur = sum(map(lambda x: x**2, np.subtract(st_new, st_new_0))) + \
+                                            sum(map(lambda x: x**2, np.subtract(su_old, su_old_0))) +\
+                                            sum(map(lambda x: x**2, np.subtract(st_old, st_old_0)))
+                                    if f_cur < f_min:
+                                        _st_new, _st_old, _su_old = st_new, st_old, su_old
+                                        f_min = f_cur
 
             if not _su_old:
                 print("nothing was found")
@@ -770,11 +745,11 @@ if __name__ == "__main__":
             rs.save_json(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.labor, "labor_tau2N4dt05")
 
-            rs.dt = 0.25
-            rs.init_equation_system()
-            rs.results = rs.results_next
-            if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
-                rs.find_min_vector(rs.results_next)
-                # rs.save_pickle(rs.results_next, "tau2N4dt05")
-                rs.save_json(rs.results_next, "tau2N4dt025")
-                rs.save_json(rs.labor, "labor_tau2N4dt025")
+        #     rs.dt = 0.25
+        #     rs.init_equation_system()
+        #     rs.results = rs.results_next
+        #     if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
+        #         rs.find_min_vector(rs.results_next)
+        #         # rs.save_pickle(rs.results_next, "tau2N4dt05")
+        #         rs.save_json(rs.results_next, "tau2N4dt025")
+        #         rs.save_json(rs.labor, "labor_tau2N4dt025")
