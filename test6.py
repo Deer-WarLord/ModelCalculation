@@ -1,10 +1,43 @@
 import json
 import pickle
+import logging
 from itertools import chain
-from time import gmtime, strftime
 import numpy as np
 from scipy.optimize import fmin_slsqp
 from sympy import *
+
+
+class Message(object):
+    def __init__(self, fmt, args):
+        self.fmt = fmt
+        self.args = args
+
+    def __str__(self):
+        return self.fmt.format(*self.args)
+
+
+class StyleAdapter(logging.LoggerAdapter):
+    def __init__(self, logger, extra=None):
+        super(StyleAdapter, self).__init__(logger, extra or {})
+
+    def log(self, level, msg, *args, **kwargs):
+        if self.isEnabledFor(level):
+            msg, kwargs = self.process(msg, kwargs)
+            self.logger._log(level, Message(msg, args), (), **kwargs)
+
+
+log = logging.getLogger('rearming_simulation')
+log.setLevel(logging.DEBUG)
+
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(message)s', "%H:%M:%S")
+ch.setFormatter(formatter)
+log.addHandler(ch)
+
+log = StyleAdapter(log)
+
+log.setLevel(logging.INFO)
 
 
 def scipy_f_wrap(f):
@@ -12,6 +45,7 @@ def scipy_f_wrap(f):
 
 
 class RearmingSimulation:
+
     def __init__(self):
 
         with open("initial_data.json") as json_file:
@@ -245,7 +279,7 @@ class RearmingSimulation:
 
     def find_initial_vector(self):
 
-        print(strftime("%H:%M:%S", gmtime()), "Phase 1 is started")
+        log.info("Phase 1 is started")
 
         for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
             s = None
@@ -262,45 +296,46 @@ class RearmingSimulation:
                         s = S_phase_1
                         break
             if not s:
-                print(strftime("%H:%M:%S", gmtime()), "nothing was found")
+                log.info("nothing was found")
                 break
-            values = [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)]
+
+            values_3 = dict([(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)])
+            values_2 = dict([(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
 
             for k in self.xfrange(j + self.dt, self.tau + self.dt, self.dt):
-                self.EQ["K_old_0_{N}".format(N=k)] = self.EQ["K_old_0_{N}".format(N=k)].subs(values)
-                self.EQ["K_old_1_{N}".format(N=k)] = self.EQ["K_old_1_{N}".format(N=k)].subs(values)
-                self.EQ["K_old_2_{N}".format(N=k)] = self.EQ["K_old_2_{N}".format(N=k)].subs(values)
+                self.EQ["K_old_0_{N}".format(N=k)] = self.EQ["K_old_0_{N}".format(N=k)].xreplace(values_3)
+                self.EQ["K_old_1_{N}".format(N=k)] = self.EQ["K_old_1_{N}".format(N=k)].xreplace(values_3)
+                self.EQ["K_old_2_{N}".format(N=k)] = self.EQ["K_old_2_{N}".format(N=k)].xreplace(values_3)
 
-                self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].subs(
-                    [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
+                self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].xreplace(values_2)
 
-                self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].subs(values)
+                self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].xreplace(values_3)
 
-            print(strftime("%H:%M:%S", gmtime()), "step {j} s: {s}".format(j=j, s=s))
+            log.info("step {} s: {}", j, s)
 
             self.results[0].update({self.EQ["su_old_{i}_{N}".format(N=j, i=i)]: s[i] for i in range(0, 3)})
 
-        print(strftime("%H:%M:%S", gmtime()), "Phase 1 is completed")
-        print(strftime("%H:%M:%S", gmtime()), "Phase 2 is started")
+        log.info("Phase 1 is completed")
+        log.info("Phase 2 is started")
 
         is_complete = True
 
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             _st_new, _st_old, _su_old = None, None, None
 
-            K_new_0_subs = self.EQ["K_new_0_{N}".format(N=j)].subs(self.results[0])
+            K_new_0_subs = self.EQ["K_new_0_{N}".format(N=j)].xreplace(self.results[0])
             K_new_0 = lambdify([self.EQ["st_old_0_{N}".format(N=j - self.tau)], self.EQ["st_new_0_{N}".format(N=j)]],
                                K_new_0_subs)
 
-            K_new_1_subs = self.EQ["K_new_1_{N}".format(N=j)].subs(self.results[0])
+            K_new_1_subs = self.EQ["K_new_1_{N}".format(N=j)].xreplace(self.results[0])
             K_new_1 = lambdify([self.EQ["st_old_1_{N}".format(N=j - self.tau)], self.EQ["st_new_1_{N}".format(N=j)]],
                                K_new_1_subs)
 
-            K_new_2_subs = self.EQ["K_new_2_{N}".format(N=j)].subs(self.results[0])
+            K_new_2_subs = self.EQ["K_new_2_{N}".format(N=j)].xreplace(self.results[0])
             K_new_2 = lambdify([self.EQ["st_old_2_{N}".format(N=j - self.tau)], self.EQ["st_new_2_{N}".format(N=j)]],
                                K_new_2_subs)
 
-            L_balance_subs = self.COND["L_balance_{N}".format(N=j)].subs(self.results[0])
+            L_balance_subs = self.COND["L_balance_{N}".format(N=j)].xreplace(self.results[0])
 
             L_balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
                                   self.EQ["st_new_1_{N}".format(N=j)],
@@ -309,7 +344,7 @@ class RearmingSimulation:
                                   self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                   self.EQ["st_old_2_{N}".format(N=j - self.tau)]], L_balance_subs)
 
-            consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].subs(self.results[0])
+            consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].xreplace(self.results[0])
             consumption = lambdify((self.EQ["st_new_0_{N}".format(N=j)],
                                     self.EQ["st_new_1_{N}".format(N=j)],
                                     self.EQ["st_new_2_{N}".format(N=j)],
@@ -318,7 +353,7 @@ class RearmingSimulation:
                                     self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                     self.EQ["st_old_2_{N}".format(N=j - self.tau)]), consumption_subs)
 
-            balance_subs = self.COND["balance_new_{N}".format(N=j)].subs(self.results[0])
+            balance_subs = self.COND["balance_new_{N}".format(N=j)].xreplace(self.results[0])
             balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
                                 self.EQ["st_new_1_{N}".format(N=j)],
                                 self.EQ["st_new_2_{N}".format(N=j)],
@@ -338,7 +373,7 @@ class RearmingSimulation:
                         b = balance(*chain(st_new, st_old))
 
                         # if abs(b) < 5:
-                        #     print("b =", b, "st_old =", st_old, "st_new =", st_new)
+                        #     log.info("b =", b, "st_old =", st_old, "st_new =", st_new)
 
                         if -1.0 <= round(b, 1) <= 1.0:
                             _st_new, _st_old = st_new, st_old
@@ -355,37 +390,33 @@ class RearmingSimulation:
                     break
 
             if not _su_old:
-                print("nothing was found")
+                log.info("nothing was found")
                 is_complete = False
                 break
 
-            print(strftime("%H:%M:%S", gmtime()),
-                  "step {j} st_new: {st_new} su_old: {su_old} st_old: {st_old}".format(j=j,
-                                                                                       st_new=_st_new,
-                                                                                       su_old=_su_old,
-                                                                                       st_old=_st_old))
+            log.info("step {} st_new: {} su_old: {} st_old: {}", j, _st_new, _su_old, _st_old)
 
             for i in range(0, 3):
                 self.results[0].update({self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]: _st_old[i]})
                 self.results[0].update({self.EQ["su_old_{i}_{N}".format(i=i, N=j)]: _su_old[i]})
                 self.results[0].update({self.EQ["st_new_{i}_{N}".format(i=i, N=j)]: _st_new[i]})
 
-            l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].subs(self.results[0]) for i in range(0, 3)]
-            l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].subs(self.results[0]) for i in range(0, 3)]
+            l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].xreplace(self.results[0]) for i in range(0, 3)]
+            l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].xreplace(self.results[0]) for i in range(0, 3)]
 
-            print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
+            log.info("L_old: {} L_new: {}", l_old, l_new)
 
             target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) ** 2 + \
                           (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) ** 2 + \
                           (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)]) ** 2
 
-            print(strftime("%H:%M:%S", gmtime()), "F =", target_func.subs(self.results[0]))
+            log.info("F = {}", target_func.xreplace(self.results[0]))
 
-        print(strftime("%H:%M:%S", gmtime()), "Phase 2 is completed")
+        log.info("Phase 2 is completed")
         return is_complete
 
     def find_initial_vector_using_prev(self, prev_dt, prev_tau, prev_N):
-        print(strftime("%H:%M:%S", gmtime()), "Phase 1 is started")
+        log.info("Phase 1 is started")
 
         prev_vector = self.results[len(self.results) - 1]
         s_state = {}
@@ -425,37 +456,38 @@ class RearmingSimulation:
                         if f < f_min:
                             s = S_phase_1
                             f_min = f
-                            print(strftime("%H:%M:%S", gmtime()), "f_min =", f_min)
+                            log.info("f_min = {}", f_min)
                             if f_min <= 1:
                                 break
             if not s:
-                print(strftime("%H:%M:%S", gmtime()), "nothing was found")
+                log.info("nothing was found")
                 is_complete = False
                 break
-            values = [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)]
+
+            values_3 = dict([(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)])
+            values_2 = dict([(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
 
             for k in self.xfrange(j + self.dt, self.tau + self.dt, self.dt):
-                self.EQ["K_old_0_{N}".format(N=k)] = self.EQ["K_old_0_{N}".format(N=k)].subs(values)
-                self.EQ["K_old_1_{N}".format(N=k)] = self.EQ["K_old_1_{N}".format(N=k)].subs(values)
-                self.EQ["K_old_2_{N}".format(N=k)] = self.EQ["K_old_2_{N}".format(N=k)].subs(values)
+                self.EQ["K_old_0_{N}".format(N=k)] = self.EQ["K_old_0_{N}".format(N=k)].xreplace(values_3)
+                self.EQ["K_old_1_{N}".format(N=k)] = self.EQ["K_old_1_{N}".format(N=k)].xreplace(values_3)
+                self.EQ["K_old_2_{N}".format(N=k)] = self.EQ["K_old_2_{N}".format(N=k)].xreplace(values_3)
 
-                self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].subs(
-                    [(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
+                self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].xreplace(values_2)
 
-                self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].subs(values)
+                self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].xreplace(values_3)
 
-            print(strftime("%H:%M:%S", gmtime()), "step {j} s: {s}".format(j=j, s=s))
+            log.info("step {} s: {}", j, s)
 
             self.results_next[0].update({self.EQ["su_old_{i}_{N}".format(N=j, i=i)]: s[i] for i in range(0, 3)})
 
             s_state[j] = round(sum(s), 2)
 
         if not is_complete:
-            print(strftime("%H:%M:%S", gmtime()), "Phase 1 isn't completed")
+            log.info("Phase 1 isn't completed")
             return
 
-        print(strftime("%H:%M:%S", gmtime()), "Phase 1 is completed")
-        print(strftime("%H:%M:%S", gmtime()), "Phase 2 is started")
+        log.info("Phase 1 is completed")
+        log.info("Phase 2 is started")
 
         generators = {}
         is_complete = True
@@ -471,19 +503,19 @@ class RearmingSimulation:
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             _st_new, _st_old, _su_old = None, None, None
 
-            K_new_0_subs = self.EQ["K_new_0_{N}".format(N=j)].subs(self.results_next[0])
+            K_new_0_subs = self.EQ["K_new_0_{N}".format(N=j)].xreplace(self.results_next[0])
             K_new_0 = lambdify([self.EQ["st_old_0_{N}".format(N=j - self.tau)], self.EQ["st_new_0_{N}".format(N=j)]],
                                K_new_0_subs)
 
-            K_new_1_subs = self.EQ["K_new_1_{N}".format(N=j)].subs(self.results_next[0])
+            K_new_1_subs = self.EQ["K_new_1_{N}".format(N=j)].xreplace(self.results_next[0])
             K_new_1 = lambdify([self.EQ["st_old_1_{N}".format(N=j - self.tau)], self.EQ["st_new_1_{N}".format(N=j)]],
                                K_new_1_subs)
 
-            K_new_2_subs = self.EQ["K_new_2_{N}".format(N=j)].subs(self.results_next[0])
+            K_new_2_subs = self.EQ["K_new_2_{N}".format(N=j)].xreplace(self.results_next[0])
             K_new_2 = lambdify([self.EQ["st_old_2_{N}".format(N=j - self.tau)], self.EQ["st_new_2_{N}".format(N=j)]],
                                K_new_2_subs)
 
-            L_balance_subs = self.COND["L_balance_{N}".format(N=j)].subs(self.results_next[0])
+            L_balance_subs = self.COND["L_balance_{N}".format(N=j)].xreplace(self.results_next[0])
 
             L_balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
                                   self.EQ["st_new_1_{N}".format(N=j)],
@@ -492,7 +524,7 @@ class RearmingSimulation:
                                   self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                   self.EQ["st_old_2_{N}".format(N=j - self.tau)]], L_balance_subs)
 
-            consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].subs(self.results_next[0])
+            consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].xreplace(self.results_next[0])
             consumption = lambdify((self.EQ["st_new_0_{N}".format(N=j)],
                                     self.EQ["st_new_1_{N}".format(N=j)],
                                     self.EQ["st_new_2_{N}".format(N=j)],
@@ -501,7 +533,7 @@ class RearmingSimulation:
                                     self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                     self.EQ["st_old_2_{N}".format(N=j - self.tau)]), consumption_subs)
 
-            balance_subs = self.COND["balance_new_{N}".format(N=j)].subs(self.results_next[0])
+            balance_subs = self.COND["balance_new_{N}".format(N=j)].xreplace(self.results_next[0])
             balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
                                 self.EQ["st_new_1_{N}".format(N=j)],
                                 self.EQ["st_new_2_{N}".format(N=j)],
@@ -541,64 +573,75 @@ class RearmingSimulation:
                                     if f_cur < f_min:
                                         _st_new, _st_old, _su_old = st_new, st_old, su_old
                                         f_min = f_cur
-                                        print(strftime("%H:%M:%S", gmtime()), "f_min =", f_min)
+                                        log.info("f_min = {}", f_min)
                                         if f_min <= 1:
                                             break
 
             if not _su_old:
-                print("nothing was found")
+                log.info("nothing was found")
                 is_complete = False
                 break
 
-            print(strftime("%H:%M:%S", gmtime()),
-                  "step {j} st_new: {st_new} su_old: {su_old} st_old: {st_old}".format(j=j,
-                                                                                       st_new=_st_new,
-                                                                                       su_old=_su_old,
-                                                                                       st_old=_st_old))
+            log.info("step {} st_new: {} su_old: {} st_old: {}", j, _st_new, _su_old, _st_old)
 
             for i in range(0, 3):
                 self.results_next[0].update({self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]: _st_old[i]})
                 self.results_next[0].update({self.EQ["su_old_{i}_{N}".format(i=i, N=j)]: _su_old[i]})
                 self.results_next[0].update({self.EQ["st_new_{i}_{N}".format(i=i, N=j)]: _st_new[i]})
 
-            l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].subs(self.results_next[0]) for i in range(0, 3)]
-            l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].subs(self.results_next[0]) for i in range(0, 3)]
+            l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].xreplace(self.results_next[0]) for i in range(0, 3)]
+            l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].xreplace(self.results_next[0]) for i in range(0, 3)]
 
-            print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
+            log.info("L_old: {} L_new: {}", l_old, l_new)
 
             target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) ** 2 + \
                           (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) ** 2 + \
                           (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)]) ** 2
 
-            print(strftime("%H:%M:%S", gmtime()), "F =", target_func.subs(self.results_next[0]))
+            log.info("F = {}", target_func.xreplace(self.results_next[0]))
 
-        print(strftime("%H:%M:%S", gmtime()), "Phase 2 is completed")
+        log.info("Phase 2 is completed")
         return is_complete
 
     def find_min_vector(self, results):
+
+        log.info("Start building target_func for minimization")
 
         target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=self.N)]) ** 2 + \
                       (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=self.N)]) ** 2 + \
                       (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=self.N)]) ** 2
 
+        log.debug("Inited target_func")
+
         step = 0
-        f_prev = target_func.subs(results[0])
+        f_prev = target_func.xreplace(results[0])
+
+        log.debug("Subs target_func")
+
         f_current = 0
         self.labor = {}
+
+        log.debug("Start minimization iterations")
 
         while True:
 
             for j in reversed(list(self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt))):
+
+                log.debug("Minimize st_new")
 
                 search_vector = [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
                 if not self._part_vector(target_func, search_vector, step, results):
                     break
                 step += 1
 
+                log.debug("Minimize su_old phase 2")
+
                 search_vector = [self.EQ["su_old_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
                 if not self._part_vector(target_func, search_vector, step, results):
                     break
                 step += 1
+
+                log.debug("Minimize su_old and st_old phase 1")
 
                 search_vector = [self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
                                 [self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)]
@@ -607,7 +650,7 @@ class RearmingSimulation:
                 step += 1
             else:
 
-                f_current = target_func.subs(results[step])
+                f_current = target_func.xreplace(results[step])
 
                 if abs(f_prev - f_current) > 0.001:
                     f_prev = f_current
@@ -615,36 +658,40 @@ class RearmingSimulation:
 
             break
 
-        print(strftime("%H:%M:%S", gmtime()), "Optimization complete. Final results are:")
+        log.info("Optimization complete. Final results are:")
 
         for k, v in results[step].items():
-            print(k, "=", v)
+            log.info("{} = {}", k, v)
 
-        print("F =", target_func.subs(results[step]))
+        log.info("F = {}", target_func.xreplace(results[step]))
 
         self.labor[0] = {}
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             self.labor[0].update({"L_{N}".format(N=j): str(self.EQ["L_{N}".format(N=j)])})
 
             self.labor[0].update({"L_new_{i}_{N}".format(N=j, i=i):
-                                      str(self.EQ["L_new_{i}_{N}".format(N=j, i=i)].subs(results[step])) for i in
+                                      str(self.EQ["L_new_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
                                   range(0, 3)})
             self.labor[0].update({"L_old_{i}_{N}".format(N=j, i=i):
-                                      str(self.EQ["L_old_{i}_{N}".format(N=j, i=i)].subs(results[step])) for i in
+                                      str(self.EQ["L_old_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
                                   range(0, 3)})
 
             self.labor[0].update({"theta_new_{i}_{N}".format(N=j, i=i):
-                                      str(self.EQ["theta_new_{i}_{N}".format(N=j, i=i)].subs(results[step])) for i in
+                                      str(self.EQ["theta_new_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
                                   range(0, 3)})
             self.labor[0].update({"theta_old_{i}_{N}".format(N=j, i=i):
-                                      str(self.EQ["theta_old_{i}_{N}".format(N=j, i=i)].subs(results[step])) for i in
+                                      str(self.EQ["theta_old_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
                                   range(0, 3)})
 
     def _part_vector(self, target_func, search_vector, step, results):
 
         subs_vector = {k: v for k, v in results[step].items() if k not in search_vector}
 
-        objective = scipy_f_wrap(lambdify(search_vector, target_func.subs(subs_vector)))
+        log.debug("Start lambdifing objective")
+
+        objective = scipy_f_wrap(lambdify(search_vector, target_func.xreplace(subs_vector)))
+
+        log.debug("Finish lambdifing objective")
 
         init_vector = [results[step][s] for s in search_vector]
 
@@ -653,16 +700,20 @@ class RearmingSimulation:
         COND = {}
         bounds_x = []
 
+        log.debug("Build X >= 0 conditions")
+
         for i in range(0, len(search_vector)):
             ieqcons_list.append(lambda x, i=i: x[i])
             COND[" >= 0 X%d" % i] = lambda x, i=i: x[i]
             bounds_x.append((0, 1))
 
+        log.debug("Build 1th phase conditions")
+
         for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
 
             cond_list = (
-                ("== 0 invest_M_{N}".format(N=j), self.COND["invest_M_{N}".format(N=j)].subs(subs_vector)),
-                ("== 0 balance_{N}".format(N=j), self.COND["balance_{N}".format(N=j)].subs(subs_vector)),
+                ("== 0 invest_M_{N}".format(N=j), self.COND["invest_M_{N}".format(N=j)].xreplace(subs_vector)),
+                ("== 0 balance_{N}".format(N=j), self.COND["balance_{N}".format(N=j)].xreplace(subs_vector)),
             )
 
             for name, cond in cond_list:
@@ -671,20 +722,26 @@ class RearmingSimulation:
                     eqcons_list.append(f)
                     COND[name] = f
 
-            cond = self.COND["consuming_bound_L_{N}".format(N=j)].subs(subs_vector)
+            cond = self.COND["consuming_bound_L_{N}".format(N=j)].xreplace(subs_vector)
 
             if len(cond.free_symbols) > 0:
                 f = scipy_f_wrap(lambdify(search_vector, cond))
                 ieqcons_list.append(f)
                 COND[" >= 0 consuming_bound_L_{N}".format(N=j)] = f
+
+        log.debug("Build 2th phase conditions")
 
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
 
+            log.debug("j = {} Build invest and balance cond", j)
+
             cond_list = (
-                ("== 0 invest_old_M_{N}".format(N=j), self.COND["invest_old_M_{N}".format(N=j)].subs(subs_vector)),
-                ("== 0 invest_new_M_{N}".format(N=j), self.COND["invest_new_M_{N}".format(N=j)].subs(subs_vector)),
-                ("== 0 balance_new_{N}".format(N=j), self.COND["balance_new_{N}".format(N=j)].subs(subs_vector))
+                ("== 0 invest_old_M_{N}".format(N=j), self.COND["invest_old_M_{N}".format(N=j)].xreplace(subs_vector)),
+                ("== 0 invest_new_M_{N}".format(N=j), self.COND["invest_new_M_{N}".format(N=j)].xreplace(subs_vector)),
+                ("== 0 balance_new_{N}".format(N=j), self.COND["balance_new_{N}".format(N=j)].xreplace(subs_vector))
             )
+
+            log.debug("j = {} Finish subs invest and balance cond", j)
 
             for name, cond in cond_list:
                 if len(cond.free_symbols) > 0:
@@ -692,57 +749,74 @@ class RearmingSimulation:
                     eqcons_list.append(f)
                     COND[name] = f
 
-            cond = self.COND["consuming_bound_L_{N}".format(N=j)].subs(subs_vector)
+            log.debug("j = {} Build consuming bound cond", j)
+
+            cond = self.COND["consuming_bound_L_{N}".format(N=j)].xreplace(subs_vector)
+
+            log.debug("j = {} Finish subs consuming bound cond", j)
 
             if len(cond.free_symbols) > 0:
                 f = scipy_f_wrap(lambdify(search_vector, cond))
                 ieqcons_list.append(f)
                 COND[" >= 0 consuming_bound_L_{N}".format(N=j)] = f
 
-            cond = self.COND["L_balance_{N}".format(N=j)].subs(subs_vector)
+            log.debug("j = {} Build labor balance cond", j)
+
+            cond = self.COND["L_balance_{N}".format(N=j)].xreplace(subs_vector)
+
+            log.debug("j = {} Finish subs labor balance cond", j)
 
             if len(cond.free_symbols) > 0:
                 f = scipy_f_wrap(lambdify(search_vector, cond))
                 ieqcons_list.append(f)
                 COND[" >= 0 L_balance_{N}".format(N=j)] = f
 
+        log.debug("Run fmin_slsqp")
+
         min_vector = fmin_slsqp(func=objective,
                                 x0=np.array(init_vector),
                                 eqcons=eqcons_list,
                                 ieqcons=ieqcons_list,
                                 bounds=bounds_x,
-                                iter=100,
-                                acc=0.1)
+                                iter=1000,
+                                acc=0.1,
+                                epsilon=0.000001)
 
         if np.isnan(min_vector[0]):
+            log.debug("fmin_slsqp returned Nan results")
             return False
 
+        log.debug("fmin_slsqp returned results")
         results[step + 1] = {k: v for k, v in results[step].items()}
 
         for i, s in enumerate(search_vector):
             results[step + 1].update({s: min_vector[i]})
-            print(s, "=", min_vector[i])
+            log.debug("{} = {}", s, min_vector[i])
 
         for name, cond in COND.items():
-            print(cond(min_vector), name)
+            log.debug("{} {}", cond(min_vector), name)
 
         return True
 
-    def save_pickle(self, results, fname):
-        with open('%s.pickle' % fname, 'wb') as handle:
+    @staticmethod
+    def save_pickle(results, f_name):
+        with open('%s.pickle' % f_name, 'wb') as handle:
             pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        print(strftime("%H:%M:%S", gmtime()), "Saved result vector to file %s" % fname)
+        log.info("Saved result vector to file %s" % f_name)
 
-    def save_json(self, results, fname):
+    @staticmethod
+    def save_json(results, fname):
         with open('%s.json' % fname, 'w') as handle:
             json.dump({str(k): {str(nk): nv for nk, nv in v.items()}
                        for k, v in results.items()}, handle, ensure_ascii=False)
-        print(strftime("%H:%M:%S", gmtime()), "Saved result vector to file %s" % fname)
+        log.info("Saved result vector to file %s" % fname)
 
-    def load(self, results, fname):
-        with open('%s.pickle' % fname, 'rb') as handle:
+    @staticmethod
+    def load_pickle(f_name):
+        with open('%s.pickle' % f_name, 'rb') as handle:
             results = pickle.load(handle)
-        print(strftime("%H:%M:%S", gmtime()), "Loaded result vector from file")
+            log.info("Loaded result vector from file")
+        return results
 
 
 if __name__ == "__main__":
@@ -751,7 +825,7 @@ if __name__ == "__main__":
     rs.init_equation_system()
     if rs.find_initial_vector():
         rs.find_min_vector(rs.results)
-        # rs.save_pickle(rs.results, "tau2N4dt1")
+        rs.save_pickle(rs.results, "tau2N4dt1")
         rs.save_json(rs.results, "tau2N4dt1")
         rs.save_json(rs.labor, "labor_tau2N4dt1")
 
@@ -760,7 +834,7 @@ if __name__ == "__main__":
         # TODO use division for next init vector and pass it to minimization function
         if rs.find_initial_vector_using_prev(1.0, 2.0, 4.0):
             rs.find_min_vector(rs.results_next)
-            # rs.save_pickle(rs.results_next, "tau2N4dt05")
+            rs.save_pickle(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.labor, "labor_tau2N4dt05")
 
@@ -769,7 +843,7 @@ if __name__ == "__main__":
             # TODO use division for next init vector and pass it to minimization function
             rs.results = rs.results_next
             if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
+                rs.save_pickle(rs.results_next, "tau2N4dt025")
                 rs.find_min_vector(rs.results_next)
-                # rs.save_pickle(rs.results_next, "tau2N4dt05")
                 rs.save_json(rs.results_next, "tau2N4dt025")
                 rs.save_json(rs.labor, "labor_tau2N4dt025")
