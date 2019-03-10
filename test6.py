@@ -128,9 +128,12 @@ class RearmingSimulation:
                 self.EQ["I_{i}_{N}".format(N=j, i=i)] = self.EQ["st_old_{i}_{N}".format(N=j, i=i)] * \
                                                         self.EQ["X_old_1_{pN}".format(pN=j - self.dt, i=i)]
 
-            self.COND["invest_{N}".format(N=j)] = sum([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] +
-                                                       self.EQ["st_old_{i}_{N}".format(N=j, i=i)] for i in
-                                                       range(0, 3)])
+            self.COND["invest_{N}".format(N=j)] = self.EQ["su_old_0_{N}".format(N=j)] + \
+                                                  self.EQ["su_old_1_{N}".format(N=j)] + \
+                                                  self.EQ["su_old_2_{N}".format(N=j)] + \
+                                                  self.EQ["st_old_0_{N}".format(N=j)] + \
+                                                  self.EQ["st_old_1_{N}".format(N=j)] + \
+                                                  self.EQ["st_old_2_{N}".format(N=j)]
 
             self.COND["invest_M_{N}".format(N=j)] = 1 - self.COND["invest_{N}".format(N=j)]  # >0
 
@@ -176,7 +179,9 @@ class RearmingSimulation:
                                                             self.EQ["k_{i}".format(i=i)]
 
             self.COND["L_balance_{N}".format(N=j)] = self.EQ["L_{N}".format(N=j)] - \
-                                                     sum(self.EQ["L_new_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)) # >0
+                                                     (self.EQ["L_new_0_{N}".format(N=j)] +
+                                                      self.EQ["L_new_1_{N}".format(N=j)] +
+                                                      self.EQ["L_new_2_{N}".format(N=j)])  # >0
 
             for i in range(0, 3):
                 self.EQ["theta_new_{i}_{N}".format(N=j, i=i)] = self.EQ["L_new_{i}_{N}".format(N=j, i=i)] / \
@@ -188,7 +193,9 @@ class RearmingSimulation:
                                                             self.EQ["K_new_{i}_{N}".format(N=j, i=i)] ** \
                                                             self.EQ["betta_new_{i}".format(i=i)]
 
-            theta_new_sum = sum(self.EQ["theta_new_{i}_{N}".format(N=j, i=i)] for i in range(0, 3))
+            theta_new_sum = self.EQ["theta_new_0_{N}".format(N=j)] + \
+                            self.EQ["theta_new_1_{N}".format(N=j)] + \
+                            self.EQ["theta_new_2_{N}".format(N=j)]
 
             for i in range(0, 3):
                 self.EQ["theta_old_{i}_{N}".format(i=i, N=j)] = self.EQ["theta_old_{i}_tau".format(i=i)] * \
@@ -213,13 +220,15 @@ class RearmingSimulation:
                                                             self.EQ["K_old_{i}_{N}".format(N=j, i=i)] ** \
                                                             self.EQ["betta_old_{i}".format(i=i)]
 
-            self.COND["invest_new_{N}".format(N=j)] = sum([self.EQ["st_new_{i}_{N}".format(N=j, i=i)] for i in
-                                                           range(0, 3)])
+            self.COND["invest_new_{N}".format(N=j)] = self.EQ["st_new_0_{N}".format(N=j)] + \
+                                                      self.EQ["st_new_1_{N}".format(N=j)] + \
+                                                      self.EQ["st_new_2_{N}".format(N=j)]
 
             self.COND["invest_new_M_{N}".format(N=j)] = 1 - self.COND["invest_new_{N}".format(N=j)]  # >0
 
-            self.COND["invest_old_{N}".format(N=j)] = sum([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in
-                                                           range(0, 3)])
+            self.COND["invest_old_{N}".format(N=j)] = self.EQ["su_old_0_{N}".format(N=j)] + \
+                                                      self.EQ["su_old_1_{N}".format(N=j)] + \
+                                                      self.EQ["su_old_2_{N}".format(N=j)]
 
             self.COND["invest_old_M_{N}".format(N=j)] = 1 - self.COND["invest_old_{N}".format(N=j)]  # >0
 
@@ -322,14 +331,14 @@ class RearmingSimulation:
                 for st_old in self.generate_s(self.ds, 0.3):
 
                     if K_new_0(st_old[0], st_new[0]) >= 0 and \
-                       K_new_1(st_old[1], st_new[1]) >= 0 and \
-                       K_new_2(st_old[2], st_new[2]) >= 0 and \
-                       L_balance(*chain(st_new, st_old)) >= 0:
+                                    K_new_1(st_old[1], st_new[1]) >= 0 and \
+                                    K_new_2(st_old[2], st_new[2]) >= 0 and \
+                                    L_balance(*chain(st_new, st_old)) >= 0:
 
                         b = balance(*chain(st_new, st_old))
 
-                        if abs(b) < 5:
-                            print("b =", b, "st_old =", st_old, "st_new =", st_new)
+                        # if abs(b) < 5:
+                        #     print("b =", b, "st_old =", st_old, "st_new =", st_new)
 
                         if -1.0 <= round(b, 1) <= 1.0:
                             _st_new, _st_old = st_new, st_old
@@ -366,8 +375,9 @@ class RearmingSimulation:
 
             print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
 
-            target_func = sum([(self.EQ["theta_old_{i}".format(i=i)] -
-                                self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]) for i in range(0, 3)])
+            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) ** 2 + \
+                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) ** 2 + \
+                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)]) ** 2
 
             print(strftime("%H:%M:%S", gmtime()), "F =", target_func.subs(self.results[0]))
 
@@ -385,15 +395,17 @@ class RearmingSimulation:
         for j in self.xfrange(prev_dt, prev_tau + prev_dt, prev_dt):
             v = tuple(prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3))
             b = round(sum(v), 2)
-            generators[j - self.dt] = self.generate_s_around(self.ds, b, v)
-            generators[j] = self.generate_s_around(self.ds, b, v)
+            generators[j - self.dt] = list(self.generate_s_around(self.ds, b, v))  # TODO make flexible BOUNDS !!!
+            generators[j] = list(self.generate_s_around(self.ds, b, v))
             prev_s_state[j - self.dt] = v
             prev_s_state[j] = v
-
 
         is_complete = True
 
         self.results_next = {0: {}}
+
+        lb = -128.0
+        rb = 128.0
 
         for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
             s = None
@@ -408,11 +420,14 @@ class RearmingSimulation:
             for S_phase_1 in generators[j]:
                 if K_old_0(S_phase_1[0]) > 0 and K_old_1(S_phase_1[1]) > 0 and K_old_2(S_phase_1[2]) > 0:
                     b = balance(*S_phase_1)
-                    if -1.0 <= b <= 1.0 and consumption(S_phase_1[2]) >= self.C:
-                        f = sum(map(lambda x: x**2, np.subtract(S_phase_1, prev_s_state[j])))
+                    if lb <= b <= rb and consumption(S_phase_1[2]) >= self.C:
+                        f = sum(map(lambda x: x ** 2, np.subtract(S_phase_1, prev_s_state[j]))) + abs(b)
                         if f < f_min:
                             s = S_phase_1
                             f_min = f
+                            print(strftime("%H:%M:%S", gmtime()), "f_min =", f_min)
+                            if f_min <= 1:
+                                break
             if not s:
                 print(strftime("%H:%M:%S", gmtime()), "nothing was found")
                 is_complete = False
@@ -452,7 +467,6 @@ class RearmingSimulation:
             b = round(sum(v), 2)
             generators[j - self.dt] = list(self.generate_s_around(self.ds, b, v))
             generators[j] = list(self.generate_s_around(self.ds, b, v))
-
 
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             _st_new, _st_old, _su_old = None, None, None
@@ -502,7 +516,8 @@ class RearmingSimulation:
             except Exception as e:
                 st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
                 su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
-                st_old_0 = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau + self.dt)]] for i in range(0, 3)]
+                st_old_0 = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau + self.dt)]] for i in
+                            range(0, 3)]
 
             st_new_generator = self.generate_s_around(self.ds / 2, 1.0, st_new_0)
             su_old_generator = list(self.generate_s_around(self.ds / 2, 1.0, su_old_0))
@@ -512,20 +527,23 @@ class RearmingSimulation:
             for st_new in st_new_generator:
                 for st_old in generators[j]:
                     if K_new_0(st_old[0], st_new[0]) >= 0 and \
-                       K_new_1(st_old[1], st_new[1]) >= 0 and \
-                       K_new_2(st_old[2], st_new[2]) >= 0 and \
-                       L_balance(*chain(st_new, st_old)) >= 0:
+                                    K_new_1(st_old[1], st_new[1]) >= 0 and \
+                                    K_new_2(st_old[2], st_new[2]) >= 0 and \
+                                    L_balance(*chain(st_new, st_old)) >= 0:
                         b = balance(*chain(st_new, st_old))
                         if lb <= round(b, 4) <= rb:
                             for su_old in su_old_generator:
                                 c = consumption(*chain(st_new, [su_old[2]], st_old)) - self.C
                                 if c >= 0:
-                                    f_cur = sum(map(lambda x: x**2, np.subtract(st_new, st_new_0))) + \
-                                            sum(map(lambda x: x**2, np.subtract(su_old, su_old_0))) +\
-                                            sum(map(lambda x: x**2, np.subtract(st_old, st_old_0)))
+                                    f_cur = sum(map(lambda x: x ** 2, np.subtract(st_new, st_new_0))) + \
+                                            sum(map(lambda x: x ** 2, np.subtract(su_old, su_old_0))) + \
+                                            sum(map(lambda x: x ** 2, np.subtract(st_old, st_old_0))) + abs(b)
                                     if f_cur < f_min:
                                         _st_new, _st_old, _su_old = st_new, st_old, su_old
                                         f_min = f_cur
+                                        print(strftime("%H:%M:%S", gmtime()), "f_min =", f_min)
+                                        if f_min <= 1:
+                                            break
 
             if not _su_old:
                 print("nothing was found")
@@ -548,8 +566,9 @@ class RearmingSimulation:
 
             print("L_old: {l_old} L_new: {l_new}".format(l_old=l_old, l_new=l_new))
 
-            target_func = sum([(self.EQ["theta_old_{i}".format(i=i)] -
-                                self.EQ["theta_new_{i}_{N}".format(N=j, i=i)]) for i in range(0, 3)])
+            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) ** 2 + \
+                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) ** 2 + \
+                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)]) ** 2
 
             print(strftime("%H:%M:%S", gmtime()), "F =", target_func.subs(self.results_next[0]))
 
@@ -558,8 +577,9 @@ class RearmingSimulation:
 
     def find_min_vector(self, results):
 
-        target_func = sum([(self.EQ["theta_old_{i}".format(i=i)] -
-                            self.EQ["theta_new_{i}_{N}".format(N=self.N, i=i)]) for i in range(0, 3)])
+        target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=self.N)]) ** 2 + \
+                      (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=self.N)]) ** 2 + \
+                      (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=self.N)]) ** 2
 
         step = 0
         f_prev = target_func.subs(results[0])
@@ -595,7 +615,7 @@ class RearmingSimulation:
 
             break
 
-        print("Optimization complete. Final results are:")
+        print(strftime("%H:%M:%S", gmtime()), "Optimization complete. Final results are:")
 
         for k, v in results[step].items():
             print(k, "=", v)
@@ -691,10 +711,8 @@ class RearmingSimulation:
                                 eqcons=eqcons_list,
                                 ieqcons=ieqcons_list,
                                 bounds=bounds_x,
-                                full_output=True,
-                                iter=1000,
-                                acc=0.1,
-                                epsilon=0.000001)
+                                iter=100,
+                                acc=0.1)
 
         if np.isnan(min_vector[1]):
             return False
@@ -739,17 +757,19 @@ if __name__ == "__main__":
 
         rs.dt = 0.5
         rs.init_equation_system()
+        # TODO use division for next init vector and pass it to minimization function
         if rs.find_initial_vector_using_prev(1.0, 2.0, 4.0):
             rs.find_min_vector(rs.results_next)
             # rs.save_pickle(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.labor, "labor_tau2N4dt05")
 
-        #     rs.dt = 0.25
-        #     rs.init_equation_system()
-        #     rs.results = rs.results_next
-        #     if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
-        #         rs.find_min_vector(rs.results_next)
-        #         # rs.save_pickle(rs.results_next, "tau2N4dt05")
-        #         rs.save_json(rs.results_next, "tau2N4dt025")
-        #         rs.save_json(rs.labor, "labor_tau2N4dt025")
+            rs.dt = 0.25
+            rs.init_equation_system()
+            # TODO use division for next init vector and pass it to minimization function
+            rs.results = rs.results_next
+            if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
+                rs.find_min_vector(rs.results_next)
+                # rs.save_pickle(rs.results_next, "tau2N4dt05")
+                rs.save_json(rs.results_next, "tau2N4dt025")
+                rs.save_json(rs.labor, "labor_tau2N4dt025")
