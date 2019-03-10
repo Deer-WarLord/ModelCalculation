@@ -714,17 +714,17 @@ class RearmingSimulation:
                                 iter=100,
                                 acc=0.1)
 
-        if np.isnan(min_vector[1]):
+        if np.isnan(min_vector[0]):
             return False
 
         results[step + 1] = {k: v for k, v in results[step].items()}
 
         for i, s in enumerate(search_vector):
-            results[step + 1].update({s: min_vector[0][i]})
-            print(s, "=", min_vector[0][i])
+            results[step + 1].update({s: min_vector[i]})
+            print(s, "=", min_vector[i])
 
         for name, cond in COND.items():
-            print(cond(min_vector[0]), name)
+            print(cond(min_vector), name)
 
         return True
 
