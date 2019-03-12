@@ -37,7 +37,7 @@ log.addHandler(ch)
 
 log = StyleAdapter(log)
 
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 
 def scipy_f_wrap(f):
@@ -406,9 +406,9 @@ class RearmingSimulation:
 
             log.info("L_old: {} L_new: {}", l_old, l_new)
 
-            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) ** 2 + \
-                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) ** 2 + \
-                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)]) ** 2
+            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) + \
+                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) + \
+                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)])
 
             log.info("F = {}", target_func.xreplace(self.results[0]))
 
@@ -456,7 +456,7 @@ class RearmingSimulation:
                         if f < f_min:
                             s = S_phase_1
                             f_min = f
-                            log.info("f_min = {}", f_min)
+                            log.debug("f_min = {}", f_min)
                             if f_min <= 1:
                                 break
             if not s:
@@ -573,7 +573,7 @@ class RearmingSimulation:
                                     if f_cur < f_min:
                                         _st_new, _st_old, _su_old = st_new, st_old, su_old
                                         f_min = f_cur
-                                        log.info("f_min = {}", f_min)
+                                        log.debug("f_min = {}", f_min)
                                         if f_min <= 1:
                                             break
 
@@ -594,9 +594,9 @@ class RearmingSimulation:
 
             log.info("L_old: {} L_new: {}", l_old, l_new)
 
-            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) ** 2 + \
-                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) ** 2 + \
-                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)]) ** 2
+            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) + \
+                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) + \
+                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)])
 
             log.info("F = {}", target_func.xreplace(self.results_next[0]))
 
@@ -607,9 +607,9 @@ class RearmingSimulation:
 
         log.info("Start building target_func for minimization")
 
-        target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=self.N)]) ** 2 + \
-                      (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=self.N)]) ** 2 + \
-                      (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=self.N)]) ** 2
+        target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=self.N)]) + \
+                      (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=self.N)]) + \
+                      (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=self.N)])
 
         log.debug("Inited target_func")
 
@@ -627,21 +627,21 @@ class RearmingSimulation:
 
             for j in reversed(list(self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt))):
 
-                log.debug("Minimize st_new")
+                log.debug("step = {} Minimize st_new", step)
 
                 search_vector = [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
                 if not self._part_vector(target_func, search_vector, step, results):
                     break
                 step += 1
 
-                log.debug("Minimize su_old phase 2")
+                log.debug("step = {} Minimize su_old phase 2", step)
 
                 search_vector = [self.EQ["su_old_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
                 if not self._part_vector(target_func, search_vector, step, results):
                     break
                 step += 1
 
-                log.debug("Minimize su_old and st_old phase 1")
+                log.debug("step = {} Minimize su_old and st_old phase 1", step)
 
                 search_vector = [self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
                                 [self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)]
@@ -651,9 +651,12 @@ class RearmingSimulation:
             else:
 
                 f_current = target_func.xreplace(results[step])
-
-                if abs(f_prev - f_current) > 0.001:
+                log.debug("f_prev = {} f_current = {}", f_prev, f_current)
+                delta = abs(f_prev - f_current)
+                log.debug("Delta = {}", delta)
+                if delta > 0.001:
                     f_prev = f_current
+                    log.debug("step = {} Go to another one minimization cycle ", step)
                     continue
 
             break
@@ -661,7 +664,7 @@ class RearmingSimulation:
         log.info("Optimization complete. Final results are:")
 
         for k, v in results[step].items():
-            log.info("{} = {}", k, v)
+            log.debug("{} = {}", k, v)
 
         log.info("F = {}", target_func.xreplace(results[step]))
 
@@ -779,8 +782,7 @@ class RearmingSimulation:
                                 ieqcons=ieqcons_list,
                                 bounds=bounds_x,
                                 iter=1000,
-                                acc=0.1,
-                                epsilon=0.000001)
+                                acc=0.1)
 
         if np.isnan(min_vector[0]):
             log.debug("fmin_slsqp returned Nan results")
