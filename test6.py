@@ -13,7 +13,7 @@ class Message(object):
         self.args = args
 
     def __str__(self):
-        return self.fmt.format(*self.args)
+        return self.fmt.format(**self.args[0]) if len(self.args) == 1 and isinstance(*self.args, dict) else self.fmt.format(*self.args)
 
 
 class StyleAdapter(logging.LoggerAdapter):
@@ -28,12 +28,16 @@ class StyleAdapter(logging.LoggerAdapter):
 
 log = logging.getLogger('rearming_simulation')
 log.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(message)s', "%H:%M:%S")
 
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(message)s', "%H:%M:%S")
 ch.setFormatter(formatter)
 log.addHandler(ch)
+
+fh = logging.FileHandler('results.log')
+fh.setLevel(logging.DEBUG)
+log.addHandler(fh)
 
 log = StyleAdapter(log)
 
@@ -59,6 +63,7 @@ class RearmingSimulation:
         self.dt = float(self.json_initial_data["dh"])
         self.nu = float(self.json_initial_data["nu"])
         self.results = {0: {}}
+        self.target_func = {}
         self.res0 = {}
 
     @staticmethod
@@ -627,24 +632,14 @@ class RearmingSimulation:
 
             for j in reversed(list(self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt))):
 
-                log.debug("step = {} Minimize st_new", step)
+                log.debug("step = {step} Minimize st_new_{N} su_old_{N} su_old_{pN} st_old_{pN} ",
+                          {"step": step, "N": j, "pN": j - self.tau})
 
-                search_vector = [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
-                if not self._part_vector(target_func, search_vector, step, results):
-                    break
-                step += 1
-
-                log.debug("step = {} Minimize su_old phase 2", step)
-
-                search_vector = [self.EQ["su_old_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)]
-                if not self._part_vector(target_func, search_vector, step, results):
-                    break
-                step += 1
-
-                log.debug("step = {} Minimize su_old and st_old phase 1", step)
-
-                search_vector = [self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
+                search_vector = [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)] + \
+                                [self.EQ["su_old_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)] + \
+                                [self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
                                 [self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)]
+
                 if not self._part_vector(target_func, search_vector, step, results):
                     break
                 step += 1
@@ -652,12 +647,15 @@ class RearmingSimulation:
 
                 f_current = target_func.xreplace(results[step])
                 log.debug("f_prev = {} f_current = {}", f_prev, f_current)
-                delta = abs(f_prev - f_current)
+                delta = f_prev - f_current
                 log.debug("Delta = {}", delta)
                 if delta > 0.001:
                     f_prev = f_current
                     log.debug("step = {} Go to another one minimization cycle ", step)
                     continue
+                elif delta < 0:
+                    log.debug("Optimization on step {} made function worse, return to previous results", step)
+                    step -= 1
 
             break
 
@@ -666,7 +664,10 @@ class RearmingSimulation:
         for k, v in results[step].items():
             log.debug("{} = {}", k, v)
 
-        log.info("F = {}", target_func.xreplace(results[step]))
+        target_func_val = target_func.xreplace(results[step])
+        log.info("F = {}", target_func_val)
+
+        self.target_func.update({self.dt: target_func_val})
 
         self.labor[0] = {}
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
@@ -814,6 +815,12 @@ class RearmingSimulation:
         log.info("Saved result vector to file %s" % fname)
 
     @staticmethod
+    def save_target_f_json(results, f_name):
+        with open('%s.json' % f_name, 'w') as handle:
+            json.dump({str(k): str(v) for k, v in results.items()}, handle, ensure_ascii=False)
+        log.info("Saved target function values to file %s" % f_name)
+
+    @staticmethod
     def load_pickle(f_name):
         with open('%s.pickle' % f_name, 'rb') as handle:
             results = pickle.load(handle)
@@ -830,6 +837,7 @@ if __name__ == "__main__":
         rs.save_pickle(rs.results, "tau2N4dt1")
         rs.save_json(rs.results, "tau2N4dt1")
         rs.save_json(rs.labor, "labor_tau2N4dt1")
+        rs.save_target_f_json(rs.target_func, "f_tau2N4dt1")
 
         rs.dt = 0.5
         rs.init_equation_system()
@@ -839,13 +847,26 @@ if __name__ == "__main__":
             rs.save_pickle(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.results_next, "tau2N4dt05")
             rs.save_json(rs.labor, "labor_tau2N4dt05")
+            rs.save_target_f_json(rs.target_func, "f_tau2N4dt05")
 
             rs.dt = 0.25
             rs.init_equation_system()
             # TODO use division for next init vector and pass it to minimization function
             rs.results = rs.results_next
             if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
-                rs.save_pickle(rs.results_next, "tau2N4dt025")
                 rs.find_min_vector(rs.results_next)
+                rs.save_pickle(rs.results_next, "tau2N4dt025")
                 rs.save_json(rs.results_next, "tau2N4dt025")
                 rs.save_json(rs.labor, "labor_tau2N4dt025")
+                rs.save_target_f_json(rs.target_func, "f_tau2N4dt025")
+
+                rs.dt = 0.125
+                rs.init_equation_system()
+                # TODO use division for next init vector and pass it to minimization function
+                rs.results = rs.results_next
+                if rs.find_initial_vector_using_prev(0.25, 2.0, 4.0):
+                    rs.find_min_vector(rs.results_next)
+                    rs.save_pickle(rs.results_next, "tau2N4dt0125")
+                    rs.save_json(rs.results_next, "tau2N4dt0125")
+                    rs.save_json(rs.labor, "labor_tau2N4dt0125")
+                    rs.save_target_f_json(rs.target_func, "f_tau2N4dt0125")
