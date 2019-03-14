@@ -5,6 +5,7 @@ from itertools import chain
 import numpy as np
 from scipy.optimize import fmin_slsqp
 from sympy import *
+from scipy import interpolate
 
 
 class Message(object):
@@ -41,7 +42,7 @@ log.addHandler(fh)
 
 log = StyleAdapter(log)
 
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.INFO)
 
 
 def scipy_f_wrap(f):
@@ -421,192 +422,99 @@ class RearmingSimulation:
         return is_complete
 
     def find_initial_vector_using_prev(self, prev_dt, prev_tau, prev_N):
-        log.info("Phase 1 is started")
+        log.info("Start interpolation phase")
 
         prev_vector = self.results[len(self.results) - 1]
-        s_state = {}
-        generators = {}
-        prev_s_state = {}
+
+        graphs = {}
+
+        for i in range(0, 3):
+            graphs["su_old_{i}_ph1".format(i=i)] = {"x_new": [], "x": [], "y": []}
+            graphs["st_old_{i}".format(i=i)] = {"x_new": [], "x": [], "y": []}
+            graphs["su_old_{i}_ph2".format(i=i)] = {"x_new": [], "x": [], "y": []}
+            graphs["st_new_{i}".format(i=i)] = {"x_new": [], "x": [], "y": []}
 
         for j in self.xfrange(prev_dt, prev_tau + prev_dt, prev_dt):
-            v = tuple(prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3))
-            b = round(sum(v), 2)
-            generators[j - self.dt] = list(self.generate_s_around(self.ds, b, v))  # TODO make flexible BOUNDS !!!
-            generators[j] = list(self.generate_s_around(self.ds, b, v))
-            prev_s_state[j - self.dt] = v
-            prev_s_state[j] = v
+            for i in range(0, 3):
+                graphs["su_old_{i}_ph1".format(i=i)]["x_new"].append(j - self.dt)
+                graphs["su_old_{i}_ph1".format(i=i)]["x"].append(j)
+                graphs["su_old_{i}_ph1".format(i=i)]["y"].append(prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]])
 
-        is_complete = True
+                graphs["st_old_{i}".format(i=i)]["x_new"].append(j - self.dt)
+                graphs["st_old_{i}".format(i=i)]["x"].append(j)
+                graphs["st_old_{i}".format(i=i)]["y"].append(prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j)]])
+
+        for i in range(0, 3):
+            tck = interpolate.splrep(graphs["su_old_{i}_ph1".format(i=i)]["x"],
+                                     graphs["su_old_{i}_ph1".format(i=i)]["y"], s=0, k=int(prev_tau/prev_dt) - 1)
+
+            graphs["su_old_{i}_ph1".format(i=i)]["y_new"] = interpolate.splev(
+                graphs["su_old_{i}_ph1".format(i=i)]["x_new"], tck, der=0)
+
+            graphs["su_old_{i}_ph1".format(i=i)]["results"] = dict(zip(graphs["su_old_{i}_ph1".format(i=i)]["x_new"],
+                                                                       graphs["su_old_{i}_ph1".format(i=i)]["y_new"]))
+
+            graphs["su_old_{i}_ph1".format(i=i)]["results"].update(dict(zip(graphs["su_old_{i}_ph1".format(i=i)]["x"],
+                                                                            graphs["su_old_{i}_ph1".format(i=i)]["y"])))
+
+            tck = interpolate.splrep(graphs["st_old_{i}".format(i=i)]["x"],
+                                     graphs["st_old_{i}".format(i=i)]["y"], s=0, k=int(prev_tau/prev_dt) - 1)
+
+            graphs["st_old_{i}".format(i=i)]["y_new"] = interpolate.splev(
+                graphs["st_old_{i}".format(i=i)]["x_new"], tck, der=0)
+
+            graphs["st_old_{i}".format(i=i)]["results"] = dict(zip(graphs["st_old_{i}".format(i=i)]["x_new"],
+                                                                   graphs["st_old_{i}".format(i=i)]["y_new"]))
+
+            graphs["st_old_{i}".format(i=i)]["results"].update(dict(zip(graphs["st_old_{i}".format(i=i)]["x"],
+                                                                        graphs["st_old_{i}".format(i=i)]["y"])))
+
+        for j in self.xfrange(prev_tau + prev_dt, prev_N + prev_dt, prev_dt):
+            for i in range(0, 3):
+                graphs["su_old_{i}_ph2".format(i=i)]["x_new"].append(j - self.dt)
+                graphs["su_old_{i}_ph2".format(i=i)]["x"].append(j)
+                graphs["su_old_{i}_ph2".format(i=i)]["y"].append(prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]])
+
+                graphs["st_new_{i}".format(i=i)]["x_new"].append(j - self.dt)
+                graphs["st_new_{i}".format(i=i)]["x"].append(j)
+                graphs["st_new_{i}".format(i=i)]["y"].append(prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j)]])
+
+        for i in range(0, 3):
+            tck = interpolate.splrep(graphs["su_old_{i}_ph2".format(i=i)]["x"],
+                                     graphs["su_old_{i}_ph2".format(i=i)]["y"], s=0, k=int(prev_tau/prev_dt) - 1)
+
+            graphs["su_old_{i}_ph2".format(i=i)]["y_new"] = interpolate.splev(
+                graphs["su_old_{i}_ph2".format(i=i)]["x_new"], tck, der=0)
+
+            graphs["su_old_{i}_ph2".format(i=i)]["results"] = dict(zip(graphs["su_old_{i}_ph2".format(i=i)]["x_new"],
+                                                                       graphs["su_old_{i}_ph2".format(i=i)]["y_new"]))
+
+            graphs["su_old_{i}_ph2".format(i=i)]["results"].update(dict(zip(graphs["su_old_{i}_ph2".format(i=i)]["x"],
+                                                                            graphs["su_old_{i}_ph2".format(i=i)]["y"])))
+
+            tck = interpolate.splrep(graphs["st_new_{i}".format(i=i)]["x"],
+                                     graphs["st_new_{i}".format(i=i)]["y"], s=0, k=int(prev_tau/prev_dt) - 1)
+
+            graphs["st_new_{i}".format(i=i)]["y_new"] = interpolate.splev(
+                graphs["st_new_{i}".format(i=i)]["x_new"], tck, der=0)
+
+            graphs["st_new_{i}".format(i=i)]["results"] = dict(zip(graphs["st_new_{i}".format(i=i)]["x_new"],
+                                                                   graphs["st_new_{i}".format(i=i)]["y_new"]))
+
+            graphs["st_new_{i}".format(i=i)]["results"].update(dict(zip(graphs["st_new_{i}".format(i=i)]["x"],
+                                                                        graphs["st_new_{i}".format(i=i)]["y"])))
 
         self.results_next = {0: {}}
 
-        lb = -128.0
-        rb = 128.0
-
         for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
-            s = None
-            K_old_0 = lambdify(self.EQ["su_old_0_{N}".format(N=j)], self.EQ["K_old_0_{N}".format(N=j)])
-            K_old_1 = lambdify(self.EQ["su_old_1_{N}".format(N=j)], self.EQ["K_old_1_{N}".format(N=j)])
-            K_old_2 = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["K_old_2_{N}".format(N=j)])
-            consumption = lambdify(self.EQ["su_old_2_{N}".format(N=j)], self.EQ["X_old_2_{N}".format(N=j)])
-            balance = lambdify([self.EQ["su_old_{i}_{N}".format(N=j, i=i)] for i in range(0, 3)],
-                               self.COND["balance_{N}".format(N=j)])
-
-            f_min = 1000
-            for S_phase_1 in generators[j]:
-                if K_old_0(S_phase_1[0]) > 0 and K_old_1(S_phase_1[1]) > 0 and K_old_2(S_phase_1[2]) > 0:
-                    b = balance(*S_phase_1)
-                    if lb <= b <= rb and consumption(S_phase_1[2]) >= self.C:
-                        f = sum(map(lambda x: x ** 2, np.subtract(S_phase_1, prev_s_state[j]))) + abs(b)
-                        if f < f_min:
-                            s = S_phase_1
-                            f_min = f
-                            log.debug("f_min = {}", f_min)
-                            if f_min <= 1:
-                                break
-            if not s:
-                log.info("nothing was found")
-                is_complete = False
-                break
-
-            values_3 = dict([(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(0, 3)])
-            values_2 = dict([(self.EQ["su_old_{i}_{N}".format(N=j, i=i)], s[i]) for i in range(1, 3)])
-
-            for k in self.xfrange(j + self.dt, self.tau + self.dt, self.dt):
-                self.EQ["K_old_0_{N}".format(N=k)] = self.EQ["K_old_0_{N}".format(N=k)].xreplace(values_3)
-                self.EQ["K_old_1_{N}".format(N=k)] = self.EQ["K_old_1_{N}".format(N=k)].xreplace(values_3)
-                self.EQ["K_old_2_{N}".format(N=k)] = self.EQ["K_old_2_{N}".format(N=k)].xreplace(values_3)
-
-                self.EQ["X_old_2_{N}".format(N=k)] = self.EQ["X_old_2_{N}".format(N=k)].xreplace(values_2)
-
-                self.COND["balance_{N}".format(N=k)] = self.COND["balance_{N}".format(N=k)].xreplace(values_3)
-
-            log.info("step {} s: {}", j, s)
-
-            self.results_next[0].update({self.EQ["su_old_{i}_{N}".format(N=j, i=i)]: s[i] for i in range(0, 3)})
-
-            s_state[j] = round(sum(s), 2)
-
-        if not is_complete:
-            log.info("Phase 1 isn't completed")
-            return
-
-        log.info("Phase 1 is completed")
-        log.info("Phase 2 is started")
-
-        generators = {}
-        is_complete = True
-        lb = -128.0
-        rb = 128.0
-
-        for j in self.xfrange(prev_tau + prev_dt, prev_N + prev_dt, prev_dt):
-            v = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]] for i in range(0, 3)]
-            b = round(sum(v), 2)
-            generators[j - self.dt] = list(self.generate_s_around(self.ds, b, v))
-            generators[j] = list(self.generate_s_around(self.ds, b, v))
+            for i in range(0, 3):
+                self.results_next[0][self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] = graphs["su_old_{i}_ph1".format(i=i)]["results"][j]
+                self.results_next[0][self.EQ["st_old_{i}_{N}".format(i=i, N=j)]] = graphs["st_old_{i}".format(i=i)]["results"][j]
 
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
-            _st_new, _st_old, _su_old = None, None, None
-
-            K_new_0_subs = self.EQ["K_new_0_{N}".format(N=j)].xreplace(self.results_next[0])
-            K_new_0 = lambdify([self.EQ["st_old_0_{N}".format(N=j - self.tau)], self.EQ["st_new_0_{N}".format(N=j)]],
-                               K_new_0_subs)
-
-            K_new_1_subs = self.EQ["K_new_1_{N}".format(N=j)].xreplace(self.results_next[0])
-            K_new_1 = lambdify([self.EQ["st_old_1_{N}".format(N=j - self.tau)], self.EQ["st_new_1_{N}".format(N=j)]],
-                               K_new_1_subs)
-
-            K_new_2_subs = self.EQ["K_new_2_{N}".format(N=j)].xreplace(self.results_next[0])
-            K_new_2 = lambdify([self.EQ["st_old_2_{N}".format(N=j - self.tau)], self.EQ["st_new_2_{N}".format(N=j)]],
-                               K_new_2_subs)
-
-            L_balance_subs = self.COND["L_balance_{N}".format(N=j)].xreplace(self.results_next[0])
-
-            L_balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
-                                  self.EQ["st_new_1_{N}".format(N=j)],
-                                  self.EQ["st_new_2_{N}".format(N=j)],
-                                  self.EQ["st_old_0_{N}".format(N=j - self.tau)],
-                                  self.EQ["st_old_1_{N}".format(N=j - self.tau)],
-                                  self.EQ["st_old_2_{N}".format(N=j - self.tau)]], L_balance_subs)
-
-            consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].xreplace(self.results_next[0])
-            consumption = lambdify((self.EQ["st_new_0_{N}".format(N=j)],
-                                    self.EQ["st_new_1_{N}".format(N=j)],
-                                    self.EQ["st_new_2_{N}".format(N=j)],
-                                    self.EQ["su_old_2_{N}".format(N=j)],
-                                    self.EQ["st_old_0_{N}".format(N=j - self.tau)],
-                                    self.EQ["st_old_1_{N}".format(N=j - self.tau)],
-                                    self.EQ["st_old_2_{N}".format(N=j - self.tau)]), consumption_subs)
-
-            balance_subs = self.COND["balance_new_{N}".format(N=j)].xreplace(self.results_next[0])
-            balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
-                                self.EQ["st_new_1_{N}".format(N=j)],
-                                self.EQ["st_new_2_{N}".format(N=j)],
-                                self.EQ["st_old_0_{N}".format(N=j - self.tau)],
-                                self.EQ["st_old_1_{N}".format(N=j - self.tau)],
-                                self.EQ["st_old_2_{N}".format(N=j - self.tau)]], balance_subs)
-
-            try:
-                st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3)]
-                su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3)]
-                st_old_0 = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]] for i in range(0, 3)]
-            except Exception as e:
-                st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
-                su_old_0 = [prev_vector[self.EQ["su_old_{i}_{N}".format(i=i, N=j + self.dt)]] for i in range(0, 3)]
-                st_old_0 = [prev_vector[self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau + self.dt)]] for i in
-                            range(0, 3)]
-
-            st_new_generator = self.generate_s_around(self.ds / 2, 1.0, st_new_0)
-            su_old_generator = list(self.generate_s_around(self.ds / 2, 1.0, su_old_0))
-
-            f_min = 1000
-
-            for st_new in st_new_generator:
-                for st_old in generators[j]:
-                    if K_new_0(st_old[0], st_new[0]) >= 0 and \
-                                    K_new_1(st_old[1], st_new[1]) >= 0 and \
-                                    K_new_2(st_old[2], st_new[2]) >= 0 and \
-                                    L_balance(*chain(st_new, st_old)) >= 0:
-                        b = balance(*chain(st_new, st_old))
-                        if lb <= round(b, 4) <= rb:
-                            for su_old in su_old_generator:
-                                c = consumption(*chain(st_new, [su_old[2]], st_old)) - self.C
-                                if c >= 0:
-                                    f_cur = sum(map(lambda x: x ** 2, np.subtract(st_new, st_new_0))) + \
-                                            sum(map(lambda x: x ** 2, np.subtract(su_old, su_old_0))) + \
-                                            sum(map(lambda x: x ** 2, np.subtract(st_old, st_old_0))) + abs(b)
-                                    if f_cur < f_min:
-                                        _st_new, _st_old, _su_old = st_new, st_old, su_old
-                                        f_min = f_cur
-                                        log.debug("f_min = {}", f_min)
-                                        if f_min <= 1:
-                                            break
-
-            if not _su_old:
-                log.info("nothing was found")
-                is_complete = False
-                break
-
-            log.info("step {} st_new: {} su_old: {} st_old: {}", j, _st_new, _su_old, _st_old)
-
             for i in range(0, 3):
-                self.results_next[0].update({self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]: _st_old[i]})
-                self.results_next[0].update({self.EQ["su_old_{i}_{N}".format(i=i, N=j)]: _su_old[i]})
-                self.results_next[0].update({self.EQ["st_new_{i}_{N}".format(i=i, N=j)]: _st_new[i]})
-
-            l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].xreplace(self.results_next[0]) for i in range(0, 3)]
-            l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].xreplace(self.results_next[0]) for i in range(0, 3)]
-
-            log.info("L_old: {} L_new: {}", l_old, l_new)
-
-            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) + \
-                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) + \
-                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)])
-
-            log.info("F = {}", target_func.xreplace(self.results_next[0]))
-
-        log.info("Phase 2 is completed")
-        return is_complete
+                self.results_next[0][self.EQ["su_old_{i}_{N}".format(i=i, N=j)]] = graphs["su_old_{i}_ph2".format(i=i)]["results"][j]
+                self.results_next[0][self.EQ["st_new_{i}_{N}".format(i=i, N=j)]] = graphs["st_new_{i}".format(i=i)]["results"][j]
 
     def find_min_vector(self, results):
 
@@ -623,41 +531,28 @@ class RearmingSimulation:
 
         log.debug("Subs target_func")
 
-        f_current = 0
         self.labor = {}
 
         log.debug("Start minimization iterations")
 
-        while True:
+        search_vector = []
 
-            for j in reversed(list(self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt))):
+        for j in reversed(list(self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt))):
 
-                log.debug("step = {step} Minimize st_new_{N} su_old_{N} su_old_{pN} st_old_{pN} ",
-                          {"step": step, "N": j, "pN": j - self.tau})
+            search_vector += [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)] + \
+                             [self.EQ["su_old_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)] + \
+                             [self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
+                             [self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)]
 
-                search_vector = [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)] + \
-                                [self.EQ["su_old_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)] + \
-                                [self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
-                                [self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)]
-
-                if not self._part_vector(target_func, search_vector, step, results):
-                    break
-                step += 1
-            else:
-
-                f_current = target_func.xreplace(results[step])
-                log.debug("f_prev = {} f_current = {}", f_prev, f_current)
-                delta = f_prev - f_current
-                log.debug("Delta = {}", delta)
-                if delta > 0.001:
-                    f_prev = f_current
-                    log.debug("step = {} Go to another one minimization cycle ", step)
-                    continue
-                elif delta < 0:
-                    log.debug("Optimization on step {} made function worse, return to previous results", step)
-                    step -= 1
-
-            break
+        if self._part_vector(target_func, search_vector, step, results):
+            step += 1
+            f_current = target_func.xreplace(results[step])
+            log.debug("f_prev = {} f_current = {}", f_prev, f_current)
+            delta = f_prev - f_current
+            log.debug("Delta = {}", delta)
+            if delta < 0:
+                log.debug("Optimization on step {} made function worse, return to previous results", step)
+                step -= 1
 
         log.info("Optimization complete. Final results are:")
 
@@ -689,11 +584,9 @@ class RearmingSimulation:
 
     def _part_vector(self, target_func, search_vector, step, results):
 
-        subs_vector = {k: v for k, v in results[step].items() if k not in search_vector}
-
         log.debug("Start lambdifing objective")
 
-        objective = scipy_f_wrap(lambdify(search_vector, target_func.xreplace(subs_vector)))
+        objective = scipy_f_wrap(lambdify(search_vector, target_func))
 
         log.debug("Finish lambdifing objective")
 
@@ -716,8 +609,8 @@ class RearmingSimulation:
         for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
 
             cond_list = (
-                ("== 0 invest_M_{N}".format(N=j), self.COND["invest_M_{N}".format(N=j)].xreplace(subs_vector)),
-                ("== 0 balance_{N}".format(N=j), self.COND["balance_{N}".format(N=j)].xreplace(subs_vector)),
+                ("== 0 invest_M_{N}".format(N=j), self.COND["invest_M_{N}".format(N=j)]),
+                ("== 0 balance_{N}".format(N=j), self.COND["balance_{N}".format(N=j)]),
             )
 
             for name, cond in cond_list:
@@ -726,7 +619,7 @@ class RearmingSimulation:
                     eqcons_list.append(f)
                     COND[name] = f
 
-            cond = self.COND["consuming_bound_L_{N}".format(N=j)].xreplace(subs_vector)
+            cond = self.COND["consuming_bound_L_{N}".format(N=j)]
 
             if len(cond.free_symbols) > 0:
                 f = scipy_f_wrap(lambdify(search_vector, cond))
@@ -740,9 +633,9 @@ class RearmingSimulation:
             log.debug("j = {} Build invest and balance cond", j)
 
             cond_list = (
-                ("== 0 invest_old_M_{N}".format(N=j), self.COND["invest_old_M_{N}".format(N=j)].xreplace(subs_vector)),
-                ("== 0 invest_new_M_{N}".format(N=j), self.COND["invest_new_M_{N}".format(N=j)].xreplace(subs_vector)),
-                ("== 0 balance_new_{N}".format(N=j), self.COND["balance_new_{N}".format(N=j)].xreplace(subs_vector))
+                ("== 0 invest_old_M_{N}".format(N=j), self.COND["invest_old_M_{N}".format(N=j)]),
+                ("== 0 invest_new_M_{N}".format(N=j), self.COND["invest_new_M_{N}".format(N=j)]),
+                ("== 0 balance_new_{N}".format(N=j), self.COND["balance_new_{N}".format(N=j)])
             )
 
             log.debug("j = {} Finish subs invest and balance cond", j)
@@ -755,7 +648,7 @@ class RearmingSimulation:
 
             log.debug("j = {} Build consuming bound cond", j)
 
-            cond = self.COND["consuming_bound_L_{N}".format(N=j)].xreplace(subs_vector)
+            cond = self.COND["consuming_bound_L_{N}".format(N=j)]
 
             log.debug("j = {} Finish subs consuming bound cond", j)
 
@@ -766,7 +659,7 @@ class RearmingSimulation:
 
             log.debug("j = {} Build labor balance cond", j)
 
-            cond = self.COND["L_balance_{N}".format(N=j)].xreplace(subs_vector)
+            cond = self.COND["L_balance_{N}".format(N=j)]
 
             log.debug("j = {} Finish subs labor balance cond", j)
 
@@ -841,32 +734,29 @@ if __name__ == "__main__":
 
         rs.dt = 0.5
         rs.init_equation_system()
-        # TODO use division for next init vector and pass it to minimization function
-        if rs.find_initial_vector_using_prev(1.0, 2.0, 4.0):
-            rs.find_min_vector(rs.results_next)
-            rs.save_pickle(rs.results_next, "tau2N4dt05")
-            rs.save_json(rs.results_next, "tau2N4dt05")
-            rs.save_json(rs.labor, "labor_tau2N4dt05")
-            rs.save_target_f_json(rs.target_func, "f_tau2N4dt05")
+        rs.find_initial_vector_using_prev(1.0, 2.0, 4.0)
+        rs.find_min_vector(rs.results_next)
+        rs.save_pickle(rs.results_next, "tau2N4dt05")
+        rs.save_json(rs.results_next, "tau2N4dt05")
+        rs.save_json(rs.labor, "labor_tau2N4dt05")
+        rs.save_target_f_json(rs.target_func, "f_tau2N4dt05")
 
-            rs.dt = 0.25
-            rs.init_equation_system()
-            # TODO use division for next init vector and pass it to minimization function
-            rs.results = rs.results_next
-            if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
-                rs.find_min_vector(rs.results_next)
-                rs.save_pickle(rs.results_next, "tau2N4dt025")
-                rs.save_json(rs.results_next, "tau2N4dt025")
-                rs.save_json(rs.labor, "labor_tau2N4dt025")
-                rs.save_target_f_json(rs.target_func, "f_tau2N4dt025")
-
-                rs.dt = 0.125
-                rs.init_equation_system()
-                # TODO use division for next init vector and pass it to minimization function
-                rs.results = rs.results_next
-                if rs.find_initial_vector_using_prev(0.25, 2.0, 4.0):
-                    rs.find_min_vector(rs.results_next)
-                    rs.save_pickle(rs.results_next, "tau2N4dt0125")
-                    rs.save_json(rs.results_next, "tau2N4dt0125")
-                    rs.save_json(rs.labor, "labor_tau2N4dt0125")
-                    rs.save_target_f_json(rs.target_func, "f_tau2N4dt0125")
+            # rs.dt = 0.25
+            # rs.init_equation_system()
+            # rs.results = rs.results_next
+            # if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
+            #     rs.find_min_vector(rs.results_next)
+            #     rs.save_pickle(rs.results_next, "tau2N4dt025")
+            #     rs.save_json(rs.results_next, "tau2N4dt025")
+            #     rs.save_json(rs.labor, "labor_tau2N4dt025")
+            #     rs.save_target_f_json(rs.target_func, "f_tau2N4dt025")
+            #
+            #     rs.dt = 0.125
+            #     rs.init_equation_system()
+            #     rs.results = rs.results_next
+            #     if rs.find_initial_vector_using_prev(0.25, 2.0, 4.0):
+            #         rs.find_min_vector(rs.results_next)
+            #         rs.save_pickle(rs.results_next, "tau2N4dt0125")
+            #         rs.save_json(rs.results_next, "tau2N4dt0125")
+            #         rs.save_json(rs.labor, "labor_tau2N4dt0125")
+            #         rs.save_target_f_json(rs.target_func, "f_tau2N4dt0125")
