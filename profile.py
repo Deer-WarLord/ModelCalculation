@@ -1,4 +1,4 @@
-from test6 import RearmingSimulation
+from main import RearmingSimulation
 
 if __name__ == "__main__":
     rs = RearmingSimulation()

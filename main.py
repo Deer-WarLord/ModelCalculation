@@ -118,6 +118,38 @@ class RearmingSimulation:
                         visited.add((i, j, k))
                         yield (i, j, k)
 
+    def _build_capital_eq(self, j, i):
+        self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
+                                                     self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)] +
+                                                     self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
+                                                     self.EQ["X_old_1_{pN}".format(pN=j - self.dt,
+                                                                                   i=i)]) * self.dt + \
+                                                    self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)]
+
+    def _build_labor_eq(self, j, results, step, prefix="_old"):
+        # noinspection PyCallingNonCallable
+        self.labor[0].update({"L{}_{i}_{N}".format(prefix, N=j, i=i):
+            str(self.EQ["L{}_{i}_{N}".format(prefix, N=j, i=i)].xreplace(results[step])) for i in range(0, 3)})
+
+    def _build_theta_eq(self, j, results, step, prefix="_new"):
+        # noinspection PyCallingNonCallable
+        self.labor[0].update({"theta{}_{i}_{N}".format(prefix, N=j, i=i):
+            str(self.EQ["theta{}_{i}_{N}".format(prefix, N=j, i=i)].xreplace(results[step])) for i in range(0, 3)})
+
+    def _build_invest_eq(self, j, prefix="_old"):
+        self.COND["invest{}_{N}".format(prefix, N=j)] = self.EQ["su{}_0_{N}".format(prefix, N=j)] + \
+                                                  self.EQ["su{}_1_{N}".format(prefix, N=j)] + \
+                                                  self.EQ["su{}_2_{N}".format(prefix, N=j)]
+
+        self.COND["invest{}_M_{N}".format(prefix, N=j)] = 1 - self.COND["invest{}_{N}".format(prefix, N=j)]  # >0
+
+    def _build_balance_eq(self, j, b_prefix="", x_prefix="_old"):
+        self.COND["balance{}_{N}".format(b_prefix, N=j)] = (self.EQ["X{}_0_{N}".format(x_prefix, N=j)] -
+                                                (self.EQ["X{}_0_{N}".format(x_prefix, N=j)] * self.EQ["a_0"] +
+                                                 self.EQ["X{}_1_{N}".format(x_prefix, N=j)] * self.EQ["a_1"] +
+                                                 self.EQ["X{}_2_{N}".format(x_prefix, N=j)] * self.EQ["a_2"])) / \
+                                               self.EQ["L_{N}".format(N=j)]
+
     def init_equation_system(self):
 
         self.COND = {}
@@ -141,12 +173,8 @@ class RearmingSimulation:
         for j in self.xfrange(self.dt, self.tau + self.dt, self.dt):
             for i in range(0, 3):
                 self.EQ["su_old_{i}_{N}".format(N=j, i=i)] = symbols("su_old_{i}_{N}".format(N=j, i=i), negative=False)
-                self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
-                                                             self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)] +
-                                                             self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
-                                                             self.EQ["X_old_1_{pN}".format(pN=j - self.dt,
-                                                                                           i=i)]) * self.dt + \
-                                                            self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)]
+
+                self._build_capital_eq(j, i)
 
             self.EQ["L_{N}".format(N=j)] = self.EQ["L_{pN}".format(pN=j - self.dt)] * exp(self.nu * self.dt)
 
@@ -176,11 +204,7 @@ class RearmingSimulation:
 
             self.COND["invest_M_{N}".format(N=j)] = 1 - self.COND["invest_{N}".format(N=j)]  # >0
 
-            self.COND["balance_{N}".format(N=j)] = (self.EQ["X_old_0_{N}".format(N=j)] -
-                                                    (self.EQ["X_old_0_{N}".format(N=j)] * self.EQ["a_0"] +
-                                                     self.EQ["X_old_1_{N}".format(N=j)] * self.EQ["a_1"] +
-                                                     self.EQ["X_old_2_{N}".format(N=j)] * self.EQ["a_2"])) / \
-                                                   self.EQ["L_{N}".format(N=j)]
+            self._build_balance_eq(j)
 
             self.COND["consuming_bound_{N}".format(N=j)] = self.EQ["X_old_2_{N}".format(N=j)]
 
@@ -198,6 +222,12 @@ class RearmingSimulation:
                 "L_{N}".format(N=self.tau)]
 
         self.EQ["X_new_1_{pN}".format(pN=self.tau)] = 0.0
+
+        # for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
+        #     for i in range(0, 3):
+        #         invest = "I_{i}_{pN}".format(pN=j - self.tau, i=i)
+        #         if invest not in self.EQ:
+        #             self.EQ["I_{i}_{pN}".format(pN=j - self.tau, i=i)] = 0.0
 
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             for i in range(0, 3):
@@ -245,12 +275,7 @@ class RearmingSimulation:
 
             for i in range(0, 3):
                 self.EQ["su_old_{i}_{N}".format(N=j, i=i)] = symbols("su_old_{i}_{N}".format(N=j, i=i))
-                self.EQ["K_old_{i}_{N}".format(N=j, i=i)] = (-self.EQ["mu_{i}".format(i=i)] *
-                                                             self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)] +
-                                                             self.EQ["su_old_{i}_{N}".format(N=j, i=i)] *
-                                                             self.EQ["X_old_1_{pN}".format(pN=j - self.dt,
-                                                                                           i=i)]) * self.dt + \
-                                                            self.EQ["K_old_{i}_{pN}".format(pN=j - self.dt, i=i)]
+                self._build_capital_eq(j, i)
 
             for i in range(0, 3):
                 self.EQ["X_old_{i}_{N}".format(N=j, i=i)] = self.EQ["A_old_{i}".format(i=i)] * \
@@ -259,23 +284,11 @@ class RearmingSimulation:
                                                             self.EQ["K_old_{i}_{N}".format(N=j, i=i)] ** \
                                                             self.EQ["betta_old_{i}".format(i=i)]
 
-            self.COND["invest_new_{N}".format(N=j)] = self.EQ["st_new_0_{N}".format(N=j)] + \
-                                                      self.EQ["st_new_1_{N}".format(N=j)] + \
-                                                      self.EQ["st_new_2_{N}".format(N=j)]
+            self._build_invest_eq(j, "_new")
 
-            self.COND["invest_new_M_{N}".format(N=j)] = 1 - self.COND["invest_new_{N}".format(N=j)]  # >0
+            self._build_invest_eq(j)
 
-            self.COND["invest_old_{N}".format(N=j)] = self.EQ["su_old_0_{N}".format(N=j)] + \
-                                                      self.EQ["su_old_1_{N}".format(N=j)] + \
-                                                      self.EQ["su_old_2_{N}".format(N=j)]
-
-            self.COND["invest_old_M_{N}".format(N=j)] = 1 - self.COND["invest_old_{N}".format(N=j)]  # >0
-
-            self.COND["balance_new_{N}".format(N=j)] = (self.EQ["X_new_0_{N}".format(N=j)] -
-                                                        (self.EQ["X_new_0_{N}".format(N=j)] * self.EQ["a_0"] +
-                                                         self.EQ["X_new_1_{N}".format(N=j)] * self.EQ["a_1"] +
-                                                         self.EQ["X_new_2_{N}".format(N=j)] * self.EQ["a_2"])) / \
-                                                       self.EQ["L_{N}".format(N=j)]
+            self._build_balance_eq(j, "_new", "_new")
 
             self.COND["consuming_bound_{N}".format(N=j)] = self.EQ["X_new_2_{N}".format(N=j)] + \
                                                            self.EQ["X_old_2_{N}".format(N=j)]
@@ -625,6 +638,7 @@ class RearmingSimulation:
 
         f_current = 0
         self.labor = {}
+        self.capital = {}
 
         log.debug("Start minimization iterations")
 
@@ -670,22 +684,20 @@ class RearmingSimulation:
         self.target_func.update({self.dt: target_func_val})
 
         self.labor[0] = {}
+        self.capital[0] = {}
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
             self.labor[0].update({"L_{N}".format(N=j): str(self.EQ["L_{N}".format(N=j)])})
 
-            self.labor[0].update({"L_new_{i}_{N}".format(N=j, i=i):
-                                      str(self.EQ["L_new_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
-                                  range(0, 3)})
-            self.labor[0].update({"L_old_{i}_{N}".format(N=j, i=i):
-                                      str(self.EQ["L_old_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
+            self._build_labor_eq(j, results, step, "_new")
+            self._build_labor_eq(j, results, step, "_old")
+
+            self._build_theta_eq(j, results, step, "_new")
+            self._build_theta_eq(j, results, step, "_old")
+
+            self.capital[0].update({"K_new_{i}_{N}".format(N=j, i=i):
+                                      str(self.EQ["K_new_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
                                   range(0, 3)})
 
-            self.labor[0].update({"theta_new_{i}_{N}".format(N=j, i=i):
-                                      str(self.EQ["theta_new_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
-                                  range(0, 3)})
-            self.labor[0].update({"theta_old_{i}_{N}".format(N=j, i=i):
-                                      str(self.EQ["theta_old_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
-                                  range(0, 3)})
 
     def _part_vector(self, target_func, search_vector, step, results):
 
@@ -828,45 +840,39 @@ class RearmingSimulation:
         return results
 
 
+def save_data(rs, tau, N, dt):
+    rs.save_pickle(rs.results, "tau{}N{}dt{}".format(tau, N, dt))
+    rs.save_json(rs.results, "tau{}N{}dt{}".format(tau, N, dt))
+    rs.save_json(rs.labor, "labor_tau{}N{}dt{}".format(tau, N, dt))
+    rs.save_json(rs.capital, "capital_tau{}N{}dt{}".format(tau, N, dt))
+    rs.save_target_f_json(rs.target_func, "f_tau{}N{}dt{}".format(tau, N, dt))
+
+
 if __name__ == "__main__":
+
     rs = RearmingSimulation()
     rs.dt = 1.0
     rs.init_equation_system()
     if rs.find_initial_vector():
         rs.find_min_vector(rs.results)
-        rs.save_pickle(rs.results, "tau2N4dt1")
-        rs.save_json(rs.results, "tau2N4dt1")
-        rs.save_json(rs.labor, "labor_tau2N4dt1")
-        rs.save_target_f_json(rs.target_func, "f_tau2N4dt1")
+        save_data(rs, 2, 4, 1)
 
         rs.dt = 0.5
         rs.init_equation_system()
-        # TODO use division for next init vector and pass it to minimization function
         if rs.find_initial_vector_using_prev(1.0, 2.0, 4.0):
             rs.find_min_vector(rs.results_next)
-            rs.save_pickle(rs.results_next, "tau2N4dt05")
-            rs.save_json(rs.results_next, "tau2N4dt05")
-            rs.save_json(rs.labor, "labor_tau2N4dt05")
-            rs.save_target_f_json(rs.target_func, "f_tau2N4dt05")
+            save_data(rs, 2, 4, "05")
 
             rs.dt = 0.25
             rs.init_equation_system()
-            # TODO use division for next init vector and pass it to minimization function
             rs.results = rs.results_next
             if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
                 rs.find_min_vector(rs.results_next)
-                rs.save_pickle(rs.results_next, "tau2N4dt025")
-                rs.save_json(rs.results_next, "tau2N4dt025")
-                rs.save_json(rs.labor, "labor_tau2N4dt025")
-                rs.save_target_f_json(rs.target_func, "f_tau2N4dt025")
+                save_data(rs, 2, 4, "025")
 
                 rs.dt = 0.125
                 rs.init_equation_system()
-                # TODO use division for next init vector and pass it to minimization function
                 rs.results = rs.results_next
                 if rs.find_initial_vector_using_prev(0.25, 2.0, 4.0):
                     rs.find_min_vector(rs.results_next)
-                    rs.save_pickle(rs.results_next, "tau2N4dt0125")
-                    rs.save_json(rs.results_next, "tau2N4dt0125")
-                    rs.save_json(rs.labor, "labor_tau2N4dt0125")
-                    rs.save_target_f_json(rs.target_func, "f_tau2N4dt0125")
+                    save_data(rs, 2, 4, "0125")
