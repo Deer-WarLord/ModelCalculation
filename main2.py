@@ -89,6 +89,26 @@ class RearmingSimulation:
                         yield (i * 1.0 / size, j * 1.0 / size, k * 1.0 / size)
 
     @staticmethod
+    def generate_theta_psi(s, sh, prev_theta):
+        # Мы генерируем значение Theta на текущем шаге и значения PSI на предыдущем
+        # для этого нам нужно значения Theta на предыдущем шаге
+        prev_k = [i * s for i in prev_theta]
+
+        def _inner_theta_psi(size, share, prev):
+            bound = size * share
+            for i in range(0, size, 1):
+                for j in range(0, size, 1):
+                    for k in range(2, size, 1):
+                        if (i + j + prev) == bound and k <= bound:
+                            yield (k * 1.0 / size, i * 1.0 / size, j * 1.0 / size)
+
+        for theta_psi_0 in _inner_theta_psi(s, sh, prev_k[0]):
+            for theta_psi_1 in _inner_theta_psi(s, sh, prev_k[1]):
+                for theta_psi_2 in _inner_theta_psi(s, sh, prev_k[2]):
+                    yield list(chain(theta_psi_0, theta_psi_1, theta_psi_2))
+
+
+    @staticmethod
     def generate_s_new(num, rb):
         # NEED TO BE VERY CAREFUL
         r = str(np.true_divide([rb], num)).count("0")
@@ -196,6 +216,11 @@ class RearmingSimulation:
                 self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = self.EQ["L_{N}".format(N=j, i=i)] * \
                                                             self.EQ["theta_old_{i}".format(i=i)]
 
+                # Тау не должно превышать длительность фазы накопления иначе нужно вводить отрицательный шаг
+                # TODO сделать для этого правила проверку при инициализации
+                for k in [kk for kk in range(0, 3) if kk != i]:
+                    self.EQ["psi_{i}{k}_{N}".format(N=j, i=i, k=k)] = symbols("psi_{i}{k}_{N}".format(N=j, i=i, k=k))
+
             for i in range(0, 3):
                 self.EQ["X_old_{i}_{N}".format(N=j, i=i)] = self.EQ["A_old_{i}".format(i=i)] * \
                                                             self.EQ["L_old_{i}_{N}".format(N=j, i=i)] ** \
@@ -224,6 +249,7 @@ class RearmingSimulation:
 
             self.COND["consuming_bound_L_{N}".format(N=j)] = self.EQ["X_old_2_{N}".format(N=j)] - self.C  # >0
 
+
         for i in range(0, 3):
             self.EQ["theta_old_{i}_{pN}".format(i=i, pN=self.tau)] = self.EQ["theta_old_{i}".format(i=i)]
             self.EQ["K_new_{i}_{pN}".format(pN=self.tau, i=i)] = 0.0
@@ -234,7 +260,8 @@ class RearmingSimulation:
             self.EQ["k_{i}".format(i=i)] = float(self.json_initial_data["k_new"][i])
             self.EQ["theta_old_{i}_tau".format(i=i)] = self.EQ["L_old_{i}_{N}".format(N=self.tau, i=i)] / self.EQ[
                 "L_{N}".format(N=self.tau)]
-            self.EQ["L_old_current_{i}_{pN}".format(pN=self.tau, i=i)] = self.EQ["L_old_{i}_{N}".format(N=self.tau, i=i)]
+            self.EQ["L_old_current_{i}_{pN}".format(pN=self.tau, i=i)] = self.EQ[
+                "L_old_{i}_{N}".format(N=self.tau, i=i)]
 
         self.EQ["X_new_1_{pN}".format(pN=self.tau)] = 0.0
 
@@ -266,8 +293,10 @@ class RearmingSimulation:
             for i in range(0, 3):
 
                 # Естественный прирост происходит в старые сектора экономики. Примем это отношение за константу.
-                self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = self.EQ["L_old_current_{i}_{pN}".format(pN=j - self.dt, i=i)] + \
-                                                            self.EQ["dL_{N}".format(N=j)] * self.EQ["theta_old_{i}".format(i=i)]
+                self.EQ["L_old_{i}_{N}".format(N=j, i=i)] = self.EQ[
+                                                                "L_old_current_{i}_{pN}".format(pN=j - self.dt, i=i)] + \
+                                                            self.EQ["dL_{N}".format(N=j)] * self.EQ[
+                                                                "theta_old_{i}".format(i=i)]
 
                 # Вектор распределения ТС из старого в новый сектор
                 self.EQ["theta_new_{i}_{N}".format(N=j, i=i)] = symbols("theta_new_{i}_{N}".format(N=j, i=i))
@@ -281,13 +310,16 @@ class RearmingSimulation:
                 self.EQ["L_old_current_{i}_{N}".format(N=j, i=i)] = self.EQ["L_old_{i}_{N}".format(N=j, i=i)] * \
                                                                     (1 - self.EQ["theta_new_{i}_{N}".format(N=j, i=i)])
 
+                self.EQ["sum_psi_{i}_{N}".format(N=j, i=i)] = 0
+
                 for k in [kk for kk in range(0, 3) if kk != i]:
                     self.EQ["psi_{i}{k}_{N}".format(N=j, i=i, k=k)] = symbols("psi_{i}{k}_{N}".format(N=j, i=i, k=k))
+                    self.EQ["sum_psi_{i}_{N}".format(N=j, i=i)] += self.EQ["psi_{i}{k}_{N}".format(N=j, i=i, k=k)]
 
                     # В новый сектор k из старого сектора i c лагом Tau из i в k
-                    self.EQ["L_new_{k}{i}_{N}".format(N=j + getattr(self, "tau_{i}{k}".format(i=i,k=k)), i=i, k=k)] = \
-                                                                        self.EQ["L_old_{i}_{N}".format(N=j, i=i)] * \
-                                                                        self.EQ["psi_{i}{k}_{N}".format(N=j, i=i, k=k)]
+                    self.EQ["L_new_{k}{i}_{N}".format(N=j + getattr(self, "tau_{i}{k}".format(i=i, k=k)), i=i, k=k)] = \
+                        self.EQ["L_old_{i}_{N}".format(N=j, i=i)] * \
+                        self.EQ["psi_{i}{k}_{N}".format(N=j, i=i, k=k)]
 
                     # Уход ТС из старого сектора i в новый сектор k
                     self.EQ["L_old_current_{i}_{N}".format(N=j, i=i)] -= self.EQ["L_old_{i}_{N}".format(N=j, i=i)] * \
@@ -298,7 +330,16 @@ class RearmingSimulation:
                         self.EQ["L_new_{i}_{N}".format(N=j, i=i)] = self.EQ["L_new_{i}_{N}".format(N=j, i=i)] + \
                                                                     self.EQ["L_new_{i}{k}_{N}".format(N=j, i=i, k=k)]
 
-            # TODO Theta and psi balance will be coded in generation
+                # for searching optimal vector using algorithm we still need conditions for Labor and Psi
+                self.COND["theta_psi_bound_{i}_{N}".format(i=i, N=j)] = 1 - \
+                                                                        (self.EQ["sum_psi_{i}_{N}".format(N=j, i=i)] +
+                                                                         self.EQ["theta_new_{i}_{N}".format(N=j, i=i)])
+                                                                         # >= 0
+
+            self.COND["L_balance_{N}".format(N=j)] = self.EQ["L_{N}".format(N=j)] - \
+                                                     (self.EQ["L_new_0_{N}".format(N=j)] +
+                                                      self.EQ["L_new_1_{N}".format(N=j)] +
+                                                      self.EQ["L_new_2_{N}".format(N=j)])  # >0
 
             for i in range(0, 3):
                 self.EQ["X_new_{i}_{N}".format(N=j, i=i)] = self.EQ["A_new_{i}".format(i=i)] * \
@@ -372,8 +413,10 @@ class RearmingSimulation:
 
         is_complete = True
 
+        prev_theta = [0.5, 0.5, 0.5]
+
         for j in self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt):
-            _st_new, _st_old, _su_old = None, None, None
+            _st_new, _st_old, _su_old, _theta_psi = None, None, None, None
 
             K_new_0_subs = self.EQ["K_new_0_{N}".format(N=j)].xreplace(self.results[0])
             K_new_0 = lambdify([self.EQ["st_old_0_{N}".format(N=j - self.tau)], self.EQ["st_new_0_{N}".format(N=j)]],
@@ -389,18 +432,25 @@ class RearmingSimulation:
 
             L_balance_subs = self.COND["L_balance_{N}".format(N=j)].xreplace(self.results[0])
 
-            L_balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
-                                  self.EQ["st_new_1_{N}".format(N=j)],
-                                  self.EQ["st_new_2_{N}".format(N=j)],
-                                  self.EQ["st_old_0_{N}".format(N=j - self.tau)],
-                                  self.EQ["st_old_1_{N}".format(N=j - self.tau)],
-                                  self.EQ["st_old_2_{N}".format(N=j - self.tau)]], L_balance_subs)
+            L_balance = lambdify([self.EQ["theta_new_0_{N}".format(N=j)],
+                                  self.EQ["psi_01_{N}".format(N=j - getattr(self, "tau_01"))],
+                                  self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))],
+                                  self.EQ["theta_new_1_{N}".format(N=j)],
+                                  self.EQ["psi_10_{N}".format(N=j - getattr(self, "tau_10"))],
+                                  self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))],
+                                  self.EQ["theta_new_2_{N}".format(N=j)],
+                                  self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
+                                  self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))]], L_balance_subs)
 
             consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].xreplace(self.results[0])
+
             consumption = lambdify((self.EQ["st_new_0_{N}".format(N=j)],
                                     self.EQ["st_new_1_{N}".format(N=j)],
                                     self.EQ["st_new_2_{N}".format(N=j)],
                                     self.EQ["su_old_2_{N}".format(N=j)],
+                                    self.EQ["theta_new_2_{N}".format(N=j)],
+                                    self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
+                                    self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))],
                                     self.EQ["st_old_0_{N}".format(N=j - self.tau)],
                                     self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                     self.EQ["st_old_2_{N}".format(N=j - self.tau)]), consumption_subs)
@@ -411,29 +461,49 @@ class RearmingSimulation:
                                 self.EQ["st_new_2_{N}".format(N=j)],
                                 self.EQ["st_old_0_{N}".format(N=j - self.tau)],
                                 self.EQ["st_old_1_{N}".format(N=j - self.tau)],
-                                self.EQ["st_old_2_{N}".format(N=j - self.tau)]], balance_subs)
+                                self.EQ["st_old_2_{N}".format(N=j - self.tau)],
+                                self.EQ["theta_new_0_{N}".format(N=j)],
+                                self.EQ["psi_01_{N}".format(N=j - getattr(self, "tau_01"))],
+                                self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))],
+                                self.EQ["theta_new_1_{N}".format(N=j)],
+                                self.EQ["psi_10_{N}".format(N=j - getattr(self, "tau_10"))],
+                                self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))],
+                                self.EQ["theta_new_2_{N}".format(N=j)],
+                                self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
+                                self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))]], balance_subs)
 
             for st_new in self.generate_s(int(self.ds / 4), 1.0):
 
-                for st_old in self.generate_s(self.ds, 0.3):
+                for theta_psi in self.generate_theta_psi(10, 0.5, prev_theta):
 
-                    if K_new_0(st_old[0], st_new[0]) >= 0 and \
-                                    K_new_1(st_old[1], st_new[1]) >= 0 and \
-                                    K_new_2(st_old[2], st_new[2]) >= 0 and \
-                                    L_balance(*chain(st_new, st_old)) >= 0:
+                    for st_old in self.generate_s(self.ds, 0.3):
 
-                        b = balance(*chain(st_new, st_old))
+                        if K_new_0(st_old[0], st_new[0]) >= 0 and \
+                                        K_new_1(st_old[1], st_new[1]) >= 0 and \
+                                        K_new_2(st_old[2], st_new[2]) >= 0 and \
+                                        L_balance(*chain(theta_psi)) >= 0:
 
-                        # if abs(b) < 5:
-                        #     log.info("b =", b, "st_old =", st_old, "st_new =", st_new)
+                            b = balance(*chain(st_new, st_old, theta_psi))
 
-                        if -1.0 <= round(b, 1) <= 1.0:
-                            _st_new, _st_old = st_new, st_old
+                            if abs(b) < 5:
+                                log.debug("b = {: 0.5f} st_old = {} st_new = {} theta_psi = {}", b, st_old, st_new, theta_psi)
 
-                            for su_old in self.generate_s(self.ds, 1.0):
-                                if consumption(*chain(st_new, [su_old[2]], st_old)) >= self.C:
-                                    _su_old = su_old
-                                    break
+                            if -1.0 <= round(b, 1) <= 1.0:
+                                _st_new, _st_old, _theta_psi = st_new, st_old, theta_psi
+                                max_c = -1
+                                for su_old in self.generate_s(self.ds, 1.0):
+                                    c = consumption(*chain(st_new, [su_old[2]], theta_psi[6:9], st_old))
+                                    if c >= self.C:
+                                        _su_old = su_old
+                                        break
+                                    if c >= max_c:
+                                        max_c = c
+
+                                log.info("b = {: 0.5f} max_c = {: 0.1f} st_old = {} st_new = {} theta_psi = {}",
+                                         b, max_c, st_old, st_new, theta_psi)
+
+                        if _su_old:
+                            break
 
                     if _su_old:
                         break
@@ -446,23 +516,44 @@ class RearmingSimulation:
                 is_complete = False
                 break
 
-            log.info("step {} st_new: {} su_old: {} st_old: {}", j, _st_new, _su_old, _st_old)
+            log.info("step {} st_new: {} su_old: {} st_old: {} theta_psi: {}", j, _st_new, _su_old, _st_old, _theta_psi)
 
             for i in range(0, 3):
                 self.results[0].update({self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)]: _st_old[i]})
                 self.results[0].update({self.EQ["su_old_{i}_{N}".format(i=i, N=j)]: _su_old[i]})
                 self.results[0].update({self.EQ["st_new_{i}_{N}".format(i=i, N=j)]: _st_new[i]})
+                self.results[0].update({self.EQ["theta_new_{i}_{N}".format(i=i, N=j)]: _theta_psi[i*3]})
+                prev_theta[i] = _theta_psi[i*3]
+
+            self.results[0].update({self.EQ["psi_01_{N}".format(N=j - getattr(self, "tau_01"))]: _theta_psi[1]})
+            self.results[0].update({self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))]: _theta_psi[2]})
+
+            self.results[0].update({self.EQ["psi_10_{N}".format(N=j - getattr(self, "tau_10"))]: _theta_psi[4]})
+            self.results[0].update({self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))]: _theta_psi[5]})
+
+            self.results[0].update({self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))]: _theta_psi[7]})
+            self.results[0].update({self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))]: _theta_psi[8]})
 
             l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].xreplace(self.results[0]) for i in range(0, 3)]
             l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].xreplace(self.results[0]) for i in range(0, 3)]
 
             log.info("L_old: {} L_new: {}", l_old, l_new)
 
-            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) + \
-                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) + \
-                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)])
+            target_func = self.EQ["X_new_0_{N}".format(N=j)]/self.EQ["L_new_0_{N}".format(N=j)] + \
+                          self.EQ["X_new_1_{N}".format(N=j)]/self.EQ["L_new_1_{N}".format(N=j)] + \
+                          self.EQ["X_new_2_{N}".format(N=j)]/self.EQ["L_new_2_{N}".format(N=j)]
 
             log.info("F = {}", target_func.xreplace(self.results[0]))
+            log.info("dL = {}", [l_old[i] - l_new[i] for i in range(0, 3)])
+
+        self.results[0].update({self.EQ["psi_01_{N}".format(N=self.N)]: 0.0})
+        self.results[0].update({self.EQ["psi_02_{N}".format(N=self.N)]: 0.0})
+
+        self.results[0].update({self.EQ["psi_10_{N}".format(N=self.N)]: 0.0})
+        self.results[0].update({self.EQ["psi_12_{N}".format(N=self.N)]: 0.0})
+
+        self.results[0].update({self.EQ["psi_20_{N}".format(N=self.N)]: 0.0})
+        self.results[0].update({self.EQ["psi_21_{N}".format(N=self.N)]: 0.0})
 
         log.info("Phase 2 is completed")
         return is_complete
@@ -569,18 +660,25 @@ class RearmingSimulation:
 
             L_balance_subs = self.COND["L_balance_{N}".format(N=j)].xreplace(self.results_next[0])
 
-            L_balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
-                                  self.EQ["st_new_1_{N}".format(N=j)],
-                                  self.EQ["st_new_2_{N}".format(N=j)],
-                                  self.EQ["st_old_0_{N}".format(N=j - self.tau)],
-                                  self.EQ["st_old_1_{N}".format(N=j - self.tau)],
-                                  self.EQ["st_old_2_{N}".format(N=j - self.tau)]], L_balance_subs)
+            L_balance = lambdify([self.EQ["theta_new_0_{N}".format(N=j)],
+                                  self.EQ["psi_01_{N}".format(N=j - getattr(self, "tau_01"))],
+                                  self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))],
+                                  self.EQ["theta_new_1_{N}".format(N=j)],
+                                  self.EQ["psi_10_{N}".format(N=j - getattr(self, "tau_10"))],
+                                  self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))],
+                                  self.EQ["theta_new_2_{N}".format(N=j)],
+                                  self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
+                                  self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))]], L_balance_subs)
 
             consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].xreplace(self.results_next[0])
+
             consumption = lambdify((self.EQ["st_new_0_{N}".format(N=j)],
                                     self.EQ["st_new_1_{N}".format(N=j)],
                                     self.EQ["st_new_2_{N}".format(N=j)],
                                     self.EQ["su_old_2_{N}".format(N=j)],
+                                    self.EQ["theta_new_2_{N}".format(N=j)],
+                                    self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
+                                    self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))],
                                     self.EQ["st_old_0_{N}".format(N=j - self.tau)],
                                     self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                     self.EQ["st_old_2_{N}".format(N=j - self.tau)]), consumption_subs)
@@ -591,7 +689,16 @@ class RearmingSimulation:
                                 self.EQ["st_new_2_{N}".format(N=j)],
                                 self.EQ["st_old_0_{N}".format(N=j - self.tau)],
                                 self.EQ["st_old_1_{N}".format(N=j - self.tau)],
-                                self.EQ["st_old_2_{N}".format(N=j - self.tau)]], balance_subs)
+                                self.EQ["st_old_2_{N}".format(N=j - self.tau)],
+                                self.EQ["theta_new_0_{N}".format(N=j)],
+                                self.EQ["psi_01_{N}".format(N=j - getattr(self, "tau_01"))],
+                                self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))],
+                                self.EQ["theta_new_1_{N}".format(N=j)],
+                                self.EQ["psi_10_{N}".format(N=j - getattr(self, "tau_10"))],
+                                self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))],
+                                self.EQ["theta_new_2_{N}".format(N=j)],
+                                self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
+                                self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))]], balance_subs)
 
             try:
                 st_new_0 = [prev_vector[self.EQ["st_new_{i}_{N}".format(i=i, N=j)]] for i in range(0, 3)]
@@ -605,6 +712,7 @@ class RearmingSimulation:
 
             st_new_generator = self.generate_s_around(self.ds / 2, 1.0, st_new_0)
             su_old_generator = list(self.generate_s_around(self.ds / 2, 1.0, su_old_0))
+            # TODO create theta_psi generator around !!!
 
             f_min = 1000
 
@@ -646,11 +754,12 @@ class RearmingSimulation:
 
             log.info("L_old: {} L_new: {}", l_old, l_new)
 
-            target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=j)]) + \
-                          (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=j)]) + \
-                          (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=j)])
+            target_func = self.EQ["X_new_0_{N}".format(N=j)]/self.EQ["L_new_0_{N}".format(N=j)] + \
+                          self.EQ["X_new_1_{N}".format(N=j)]/self.EQ["L_new_1_{N}".format(N=j)] + \
+                          self.EQ["X_new_2_{N}".format(N=j)]/self.EQ["L_new_2_{N}".format(N=j)]
 
             log.info("F = {}", target_func.xreplace(self.results_next[0]))
+            log.info("dL = {}", [l_old[i] - l_new[i] for i in range(0, 3)])
 
         log.info("Phase 2 is completed")
         return is_complete
@@ -659,14 +768,14 @@ class RearmingSimulation:
 
         log.info("Start building target_func for minimization")
 
-        target_func = (self.EQ["theta_old_0"] - self.EQ["theta_new_0_{N}".format(N=self.N)]) + \
-                      (self.EQ["theta_old_1"] - self.EQ["theta_new_1_{N}".format(N=self.N)]) + \
-                      (self.EQ["theta_old_2"] - self.EQ["theta_new_2_{N}".format(N=self.N)])
+        target_func = -(self.EQ["X_new_0_{N}".format(N=self.N)]/self.EQ["L_new_0_{N}".format(N=self.N)] +
+                        self.EQ["X_new_1_{N}".format(N=self.N)]/self.EQ["L_new_1_{N}".format(N=self.N)] +
+                        self.EQ["X_new_2_{N}".format(N=self.N)]/self.EQ["L_new_2_{N}".format(N=self.N)])
 
         log.debug("Inited target_func")
 
         step = 0
-        f_prev = target_func.xreplace(results[0])
+        f_prev = -target_func.xreplace(results[0])
 
         log.debug("Subs target_func")
 
@@ -680,28 +789,37 @@ class RearmingSimulation:
 
             for j in reversed(list(self.xfrange(self.tau + self.dt, self.N + self.dt, self.dt))):
 
-                log.debug("step = {step} Minimize st_new_{N} su_old_{N} su_old_{pN} st_old_{pN} ",
+                log.debug("step = {step} Minimize st_new_{N} su_old_{N} su_old_{pN} st_old_{pN} theta_psi_{N}",
                           {"step": step, "N": j, "pN": j - self.tau})
 
                 search_vector = [self.EQ["st_new_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)] + \
                                 [self.EQ["su_old_{i}_{N}".format(i=i, N=j)] for i in range(0, 3)] + \
                                 [self.EQ["su_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
-                                [self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)]
+                                [self.EQ["st_old_{i}_{N}".format(i=i, N=j - self.tau)] for i in range(0, 3)] + \
+                                [self.EQ["theta_new_0_{N}".format(N=j)],
+                                 self.EQ["psi_01_{N}".format(N=j)],
+                                 self.EQ["psi_02_{N}".format(N=j)],
+                                 self.EQ["theta_new_1_{N}".format(N=j)],
+                                 self.EQ["psi_10_{N}".format(N=j)],
+                                 self.EQ["psi_12_{N}".format(N=j)],
+                                 self.EQ["theta_new_2_{N}".format(N=j)],
+                                 self.EQ["psi_20_{N}".format(N=j)],
+                                 self.EQ["psi_21_{N}".format(N=j)]]
 
                 if not self._part_vector(target_func, search_vector, step, results):
                     break
                 step += 1
             else:
 
-                f_current = target_func.xreplace(results[step])
+                f_current = -target_func.xreplace(results[step])
                 log.debug("f_prev = {} f_current = {}", f_prev, f_current)
                 delta = f_prev - f_current
                 log.debug("Delta = {}", delta)
-                if delta > 0.001:
+                if abs(delta) > 0.001:
                     f_prev = f_current
                     log.debug("step = {} Go to another one minimization cycle ", step)
                     continue
-                elif delta < 0:
+                elif delta > 0:
                     log.debug("Optimization on step {} made function worse, return to previous results", step)
                     step -= 1
 
@@ -726,7 +844,7 @@ class RearmingSimulation:
             self._build_labor_eq(j, results, step, "_old")
 
             self._build_theta_eq(j, results, step, "_new")
-            self._build_theta_eq(j, results, step, "_old")
+            # self._build_theta_eq(j, results, step, "_old")
 
             self.capital[0].update({"K_new_{i}_{N}".format(N=j, i=i):
                                         str(self.EQ["K_new_{i}_{N}".format(N=j, i=i)].xreplace(results[step])) for i in
@@ -820,6 +938,19 @@ class RearmingSimulation:
                 ieqcons_list.append(f)
                 COND[" >= 0 L_balance_{N}".format(N=j)] = f
 
+            for i in range(0, 3):
+
+                log.debug("j = {} Theta-Psi-{} bound cond", j, i)
+
+                cond = self.COND["theta_psi_bound_{i}_{N}".format(i=i, N=j)].xreplace(subs_vector)
+
+                log.debug("j = {} Finish subs theta-Psi-{} bound cond", j, i)
+
+                if len(cond.free_symbols) > 0:
+                    f = scipy_f_wrap(lambdify(search_vector, cond))
+                    ieqcons_list.append(f)
+                    COND[" >= 0 theta_psi_bound_{i}_{N}".format(N=j, i=i)] = f
+
         log.debug("Run fmin_slsqp")
 
         min_vector = fmin_slsqp(func=objective,
@@ -848,26 +979,26 @@ class RearmingSimulation:
 
     @staticmethod
     def save_pickle(results, f_name):
-        with open('%s.pickle' % f_name, 'wb') as handle:
+        with open('%s_v2.pickle' % f_name, 'wb') as handle:
             pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
         log.info("Saved result vector to file %s" % f_name)
 
     @staticmethod
     def save_json(results, fname):
-        with open('%s.json' % fname, 'w') as handle:
+        with open('%s_v2.json' % fname, 'w') as handle:
             json.dump({str(k): {str(nk): nv for nk, nv in v.items()}
                        for k, v in results.items()}, handle, ensure_ascii=False)
         log.info("Saved result vector to file %s" % fname)
 
     @staticmethod
     def save_target_f_json(results, f_name):
-        with open('%s.json' % f_name, 'w') as handle:
+        with open('%s_v2.json' % f_name, 'w') as handle:
             json.dump({str(k): str(v) for k, v in results.items()}, handle, ensure_ascii=False)
         log.info("Saved target function values to file %s" % f_name)
 
     @staticmethod
     def load_pickle(f_name):
-        with open('%s.pickle' % f_name, 'rb') as handle:
+        with open('%s_v2.pickle' % f_name, 'rb') as handle:
             results = pickle.load(handle)
             log.info("Loaded result vector from file")
         return results
@@ -882,21 +1013,19 @@ def save_data(rs, tau, N, dt):
 
 
 if __name__ == "__main__":
-
     rs = RearmingSimulation()
     rs.dt = 1.0
     rs.init_equation_system()
-    print("finish")
-    # if rs.find_initial_vector():
-    #     rs.find_min_vector(rs.results)
-    #     save_data(rs, 2, 4, 1)
-    #
-    #     rs.dt = 0.5
-    #     rs.init_equation_system()
-    #     if rs.find_initial_vector_using_prev(1.0, 2.0, 4.0):
-    #         rs.find_min_vector(rs.results_next)
-    #         save_data(rs, 2, 4, "05")
-    #
+    if rs.find_initial_vector():
+        rs.find_min_vector(rs.results)
+        save_data(rs, 2, 4, 1)
+
+        rs.dt = 0.5
+        rs.init_equation_system()
+        if rs.find_initial_vector_using_prev(1.0, 2.0, 4.0):
+            rs.find_min_vector(rs.results_next)
+            save_data(rs, 2, 4, "05")
+
     #         rs.dt = 0.25
     #         rs.init_equation_system()
     #         rs.results = rs.results_next
