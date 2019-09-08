@@ -28,12 +28,16 @@ class StyleAdapter(logging.LoggerAdapter):
             self.logger._log(level, Message(msg, args), (), **kwargs)
 
 
+DEBUG = False
+
+log_level = logging.DEBUG if DEBUG else logging.INFO
+
 log = logging.getLogger('rearming_simulation')
-log.setLevel(logging.DEBUG)
+log.setLevel(log_level)
 formatter = logging.Formatter('%(asctime)s - %(message)s', "%H:%M:%S")
 
 ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
+ch.setLevel(log_level)
 ch.setFormatter(formatter)
 log.addHandler(ch)
 
@@ -43,7 +47,7 @@ log.addHandler(fh)
 
 log = StyleAdapter(log)
 
-log.setLevel(logging.DEBUG)
+log.setLevel(log_level)
 
 
 def scipy_f_wrap(f):
@@ -424,37 +428,26 @@ class RearmingSimulation:
 
             L_balance_subs = self.COND["L_balance_{N}".format(N=j)].xreplace(self.results[0])
 
-            # Разрыв происходит из-за того что предыдущий шаг учитывается при подсчетете текущего ТС в старом секторе
-            # А лаг вливание в новый сектор не всегда совпадает с размером шага дискретизации.
-            # TODO Впорос что учитывается в ограничениях psi предыдущего шага или psi с лагом ????
-            # Предыдущий шаг будет заполняться словарем results а вот лаг будет всплывать в исключениях
+            # Может происходить разрыв из-за того что предыдущий шаг учитывается при подсчетете текущего
+            # ТС в старом секторе, а лаг вливание в новый сектор не всегда совпадает с размером шага дискретизации.
+            # Предыдущий шаг будет заполняться словарем results так же как и лаг т.к он может быть либо больше либо
+            # равен шагу дискретизации
+            # TODO специфика формата управления  не дает нам перелить все ресурсы из первого сектора почему ???
             L_balance = lambdify([self.EQ["theta_new_0_{N}".format(N=j)],
-                                  self.EQ["psi_01_{N}".format(N=j - getattr(self, "tau_01"))],
-                                  self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))],
                                   self.EQ["theta_new_1_{N}".format(N=j)],
-                                  self.EQ["psi_10_{N}".format(N=j - getattr(self, "tau_10"))],
-                                  self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))],
-                                  self.EQ["theta_new_2_{N}".format(N=j)],
-                                  self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
-                                  self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))]], L_balance_subs)
+                                  self.EQ["theta_new_2_{N}".format(N=j)]], L_balance_subs)
 
             consumption_subs = self.COND["consuming_bound_{N}".format(N=j)].xreplace(self.results[0])
 
-            # TODO Впорос что учитывается в ограничениях psi предыдущего шага или psi с лагом ????
             consumption = lambdify((self.EQ["st_new_0_{N}".format(N=j)],
                                     self.EQ["st_new_1_{N}".format(N=j)],
                                     self.EQ["st_new_2_{N}".format(N=j)],
                                     self.EQ["su_old_2_{N}".format(N=j)],
                                     self.EQ["theta_new_2_{N}".format(N=j)],
-                                    self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
-                                    self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))],
-                                    self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))],
-                                    self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))],
                                     self.EQ["st_old_0_{N}".format(N=j - self.tau)],
                                     self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                     self.EQ["st_old_2_{N}".format(N=j - self.tau)]), consumption_subs)
 
-            # TODO Впорос что учитывается в ограничениях psi предыдущего шага или psi с лагом ????
             balance_subs = self.COND["balance_new_{N}".format(N=j)].xreplace(self.results[0])
             balance = lambdify([self.EQ["st_new_0_{N}".format(N=j)],
                                 self.EQ["st_new_1_{N}".format(N=j)],
@@ -463,14 +456,8 @@ class RearmingSimulation:
                                 self.EQ["st_old_1_{N}".format(N=j - self.tau)],
                                 self.EQ["st_old_2_{N}".format(N=j - self.tau)],
                                 self.EQ["theta_new_0_{N}".format(N=j)],
-                                self.EQ["psi_01_{N}".format(N=j - getattr(self, "tau_01"))],
-                                self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))],
                                 self.EQ["theta_new_1_{N}".format(N=j)],
-                                self.EQ["psi_10_{N}".format(N=j - getattr(self, "tau_10"))],
-                                self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))],
-                                self.EQ["theta_new_2_{N}".format(N=j)],
-                                self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))],
-                                self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))]], balance_subs)
+                                self.EQ["theta_new_2_{N}".format(N=j)]], balance_subs)
 
             for st_new in self.generate_s(int(self.ds / 4), 1.0):
 
@@ -481,9 +468,9 @@ class RearmingSimulation:
                         if K_new_0(st_old[0], st_new[0]) >= 0 and \
                                         K_new_1(st_old[1], st_new[1]) >= 0 and \
                                         K_new_2(st_old[2], st_new[2]) >= 0 and \
-                                        L_balance(*chain(theta_psi)) >= 0:
+                                        L_balance(*chain([theta_psi[0], theta_psi[3], theta_psi[6]])) >= 0:
 
-                            b = balance(*chain(st_new, st_old, theta_psi))
+                            b = balance(*chain(st_new, st_old, [theta_psi[0], theta_psi[3], theta_psi[6]]))
 
                             if abs(b) < 5:
                                 log.debug("b = {: 0.5f} st_old = {} st_new = {} theta_psi = {}", b, st_old, st_new,
@@ -493,7 +480,7 @@ class RearmingSimulation:
                                 _st_new, _st_old, _theta_psi = st_new, st_old, theta_psi
                                 max_c = -1
                                 for su_old in self.generate_s(self.ds, 1.0):
-                                    c = consumption(*chain(st_new, [su_old[2]], theta_psi[6:9], [theta_psi[2], theta_psi[5]], st_old))
+                                    c = consumption(*chain(st_new, [su_old[2]], [theta_psi[6]], st_old))
                                     if c >= self.C:
                                         _su_old = su_old
                                         break
@@ -526,14 +513,14 @@ class RearmingSimulation:
                 self.results[0].update({self.EQ["theta_new_{i}_{N}".format(i=i, N=j)]: _theta_psi[i * 3]})
                 prev_theta[i] = _theta_psi[i * 3]
 
-            self.results[0].update({self.EQ["psi_01_{N}".format(N=j - getattr(self, "tau_01"))]: _theta_psi[1]})
-            self.results[0].update({self.EQ["psi_02_{N}".format(N=j - getattr(self, "tau_02"))]: _theta_psi[2]})
+            self.results[0].update({self.EQ["psi_01_{N}".format(N=j)]: _theta_psi[1]})
+            self.results[0].update({self.EQ["psi_02_{N}".format(N=j)]: _theta_psi[2]})
 
-            self.results[0].update({self.EQ["psi_10_{N}".format(N=j - getattr(self, "tau_10"))]: _theta_psi[4]})
-            self.results[0].update({self.EQ["psi_12_{N}".format(N=j - getattr(self, "tau_12"))]: _theta_psi[5]})
+            self.results[0].update({self.EQ["psi_10_{N}".format(N=j)]: _theta_psi[4]})
+            self.results[0].update({self.EQ["psi_12_{N}".format(N=j)]: _theta_psi[5]})
 
-            self.results[0].update({self.EQ["psi_20_{N}".format(N=j - getattr(self, "tau_20"))]: _theta_psi[7]})
-            self.results[0].update({self.EQ["psi_21_{N}".format(N=j - getattr(self, "tau_21"))]: _theta_psi[8]})
+            self.results[0].update({self.EQ["psi_20_{N}".format(N=j)]: _theta_psi[7]})
+            self.results[0].update({self.EQ["psi_21_{N}".format(N=j)]: _theta_psi[8]})
 
             l_old = [self.EQ["L_old_{i}_{N}".format(N=j, i=i)].xreplace(self.results[0]) for i in range(0, 3)]
             l_new = [self.EQ["L_new_{i}_{N}".format(N=j, i=i)].xreplace(self.results[0]) for i in range(0, 3)]
@@ -832,7 +819,13 @@ class RearmingSimulation:
             log.debug("{} = {}", k, v)
 
         target_func_val = target_func.xreplace(results[step])
-        log.info("F = {}", target_func_val)
+        log.info("F = {}", -target_func_val)
+
+        l_old = [self.EQ["L_old_{i}_{N}".format(N=self.N, i=i)].xreplace(self.results[step]) for i in range(0, 3)]
+        l_new = [self.EQ["L_new_{i}_{N}".format(N=self.N, i=i)].xreplace(self.results[step]) for i in range(0, 3)]
+
+        log.info("L_old: {} L_new: {}", l_old, l_new)
+        # log.info("dL = {}", [l_old[i] - l_new[i] for i in range(0, 3)])
 
         self.target_func.update({self.dt: target_func_val})
 
@@ -1016,11 +1009,11 @@ def save_data(rs, tau, N, dt):
 if __name__ == "__main__":
     rs = RearmingSimulation()
 
-    rs.dt = 1.0
-    rs.init_equation_system()
-    if rs.find_initial_vector():
-        rs.find_min_vector(rs.results)
-        save_data(rs, 2, 4, 1)
+    # rs.dt = 1.0
+    # rs.init_equation_system()
+    # if rs.find_initial_vector():
+    #     rs.find_min_vector(rs.results)
+    #     save_data(rs, 2, 4, 1)
 
     # rs.dt = 0.5
     # rs.init_equation_system()
@@ -1028,22 +1021,8 @@ if __name__ == "__main__":
     #     rs.find_min_vector(rs.results)
     #     save_data(rs, 2, 4, "05")
 
-    # rs.dt = 0.5
-    # rs.init_equation_system()
-    # if rs.find_initial_vector_using_prev(1.0, 2.0, 4.0):
-    #     rs.find_min_vector(rs.results_next)
-    #     save_data(rs, 2, 4, "05")
-
-    #         rs.dt = 0.25
-    #         rs.init_equation_system()
-    #         rs.results = rs.results_next
-    #         if rs.find_initial_vector_using_prev(0.5, 2.0, 4.0):
-    #             rs.find_min_vector(rs.results_next)
-    #             save_data(rs, 2, 4, "025")
-    #
-    #             rs.dt = 0.125
-    #             rs.init_equation_system()
-    #             rs.results = rs.results_next
-    #             if rs.find_initial_vector_using_prev(0.25, 2.0, 4.0):
-    #                 rs.find_min_vector(rs.results_next)
-    #                 save_data(rs, 2, 4, "0125")
+    rs.dt = 0.25
+    rs.init_equation_system()
+    if rs.find_initial_vector():
+        rs.find_min_vector(rs.results)
+        save_data(rs, 2, 4, "025")
