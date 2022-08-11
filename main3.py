@@ -190,15 +190,16 @@ class RearmingSimulation:
                                                                self.EQ["q_{N}".format(i=i, N=j)])
 
     def _build_base_labor_eq(self, j, dt):
-        L1 = lambda t: t
-        L2 = lambda t: t
-        L3 = lambda t: t
-        L4 = lambda t: t
-
-        self.EQ["L_{N}".format(N=j)] = self.EQ["alpha"] * L1(dt) + \
-                                       self.EQ["beta"] * L2(dt) - \
-                                       self.EQ["gamma"] * L3(dt) - \
-                                       self.EQ["nu"] * L4(dt)
+        '''
+            X1	X2	X3	X4
+        a0	a1	a2	a3	a4
+        544909,8292	-0,520527831	-0,218150282	-46165,86125	0,34081467
+        '''
+        self.EQ["L_{N}".format(N=j)] = self.EQ["L0"] + \
+                                       self.EQ["alpha"] * dt + \
+                                       self.EQ["beta"] * dt + \
+                                       self.EQ["gamma"] * dt + \
+                                       self.EQ["nu"] * dt
 
     def _price_eq(self, i, j, prefix="_old"):
         self.EQ["p{}_{i}_{N}".format(prefix, N=j, i=i)] = (self.EQ["Y0{}_{i}".format(prefix, i=i)] +
@@ -240,10 +241,7 @@ class RearmingSimulation:
         for i in range(0, 3):
             self.COND["salary_{N}".format(N=j)] = self.EQ["w_{i}".format(i=i)] - self.EQ["W_{i}_min".format(i=i)] # >=0
 
-
-
-    # TODO init equation consts for Labor
-    # TODO init equation variables
+    # TODO init equation variables | Поділ на сектори ВІФ знайти всі константи | Аі - це yD
     # TODO init equation conditions
     # TODO check steps
     # TODO check ranges
@@ -1115,4 +1113,4 @@ if __name__ == "__main__":
     if rs.find_initial_vector():
         rs.find_min_vector(rs.results)
         save_data(rs, 2, 4, "025")
-'''
+
